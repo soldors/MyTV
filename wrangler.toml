@@ -10,11 +10,12 @@ binding = "ASSETS"
 [vars]
 NEXT_PUBLIC_SITE_NAME = "MyTV"
 
-# M1（D1 数据层）启用：
-# [[d1_databases]]
-# binding = "DB"
-# database_name = "mytv-db"
-# database_id = "<创建后填入>"
+# M1（D1 数据层）已启用：本地状态在 .wrangler/state，远程已建库
+[[d1_databases]]
+binding = "DB"
+database_name = "mytv-db"
+database_id = "c779fce0-b6ee-4827-a58d-d02416126f4e"
+migrations_dir = "migrations"
 
 # M3（KV 缓存）启用：
 # [[kv_namespaces]]

@@ -61,7 +61,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ url: string }> 
     try { return decodeURIComponent(encodedUrl); } catch { return encodedUrl; }
   })();
 
-  const guarded = guardRequest(req);
+  const guarded = await guardRequest(req);
   if (guarded && !looksLikeImageUrl(targetUrl)) return guarded;
 
   if (!isValidProxyUrl(targetUrl)) {

@@ -2,19 +2,42 @@
 
 import { NextResponse } from 'next/server';
 import { isPasswordConfigured, sessionFromCookieHeader } from './auth';
+import type { VerifiedSession } from './session';
 
 /** API Route 共享守卫：未配置密码返回 503，未登录返回 401 */
-export function guardRequest(req: Request): NextResponse | null {
+export async function guardRequest(req: Request): Promise<NextResponse | null> {
   if (!isPasswordConfigured()) {
     return NextResponse.json(
       { error: '服务器未设置 PASSWORD 环境变量' },
       { status: 503 }
     );
   }
-  if (!sessionFromCookieHeader(req.headers.get('cookie'))) {
+  if (!(await sessionFromCookieHeader(req.headers.get('cookie')))) {
     return NextResponse.json({ error: '未登录' }, { status: 401 });
   }
   return null;
+}
+
+/**
+ * 需要绑定具体用户身份的接口守卫（播放记录/收藏/搜索历史等）：
+ * 成功返回会话（用户名 + 角色），失败返回 503/401 响应。
+ */
+export async function requireSessionUser(
+  req: Request
+): Promise<{ session: VerifiedSession } | { error: NextResponse }> {
+  if (!isPasswordConfigured()) {
+    return {
+      error: NextResponse.json(
+        { error: '服务器未设置 PASSWORD 环境变量' },
+        { status: 503 }
+      ),
+    };
+  }
+  const session = await sessionFromCookieHeader(req.headers.get('cookie'));
+  if (!session) {
+    return { error: NextResponse.json({ error: '未登录' }, { status: 401 }) };
+  }
+  return { session };
 }
 
 export function jsonError(message: string, status: number): NextResponse {

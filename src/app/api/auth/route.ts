@@ -1,7 +1,20 @@
 // 移植自 LibreSpark/LibreTV v2.15.0（AGPL-3.0），见 README 开源义务说明
+// 改动（M1）：站长会话携带固定身份 admin（role=admin）；GET 返回当前会话用户，
+//             登出 DELETE 对站长与普通用户会话同样生效（同一 cookie）。
 
 import { NextResponse } from 'next/server';
-import { SESSION_COOKIE, checkRateLimit, sessionFromCookieHeader, signSession, checkPassword, clearRateLimit, isPasswordConfigured } from '@/lib/auth';
+import {
+  SESSION_COOKIE,
+  ADMIN_SESSION_USER,
+  applySessionCookie,
+  checkPassword,
+  checkRateLimit,
+  clearRateLimit,
+  clientIpOf,
+  isPasswordConfigured,
+  sessionFromCookieHeader,
+  signSession,
+} from '@/lib/auth';
 
 export const runtime = 'nodejs';
 
@@ -13,7 +26,7 @@ export async function POST(req: Request) {
     );
   }
 
-  const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || req.headers.get('x-real-ip') || 'unknown';
+  const ip = clientIpOf(req);
   if (!checkRateLimit(ip)) {
     return NextResponse.json(
       { success: false, error: '尝试次数过多，请 10 分钟后再试' },
@@ -34,32 +47,23 @@ export async function POST(req: Request) {
   }
 
   clearRateLimit(ip);
-  const { token, expiresAt } = signSession();
-  const res = NextResponse.json({ success: true });
-  // Cookie Secure 策略：COOKIE_SECURE 环境变量显式覆盖；否则按 x-forwarded-proto 推导。
-  // 不能依赖 req.url——Next.js Route Handler 中它是内部转发地址，并非用户侧的原始协议。
-  const secure = process.env.COOKIE_SECURE === 'true'
-    ? true
-    : process.env.COOKIE_SECURE === 'false'
-      ? false
-      : (req.headers.get('x-forwarded-proto')?.split(',')[0]?.trim() ?? 'http') === 'https';
-  res.cookies.set(SESSION_COOKIE, token, {
-    httpOnly: true,
-    sameSite: 'lax',
-    secure,
-    maxAge: Math.floor((expiresAt - Date.now()) / 1000),
-    path: '/',
-  });
+  const { token, expiresAt } = await signSession(ADMIN_SESSION_USER);
+  const res = NextResponse.json({ success: true, user: ADMIN_SESSION_USER });
+  applySessionCookie(res, req, token, expiresAt);
   return res;
 }
 
-/** GET：查询当前会话状态 */
+/** GET：查询当前会话状态（站长或普通用户） */
 export async function GET(req: Request) {
-  const verified = sessionFromCookieHeader(req.headers.get('cookie'));
-  return NextResponse.json({ success: true, verified });
+  const session = await sessionFromCookieHeader(req.headers.get('cookie'));
+  return NextResponse.json({
+    success: true,
+    verified: session !== null,
+    user: session ? { name: session.name, role: session.role } : null,
+  });
 }
 
-/** DELETE：登出 */
+/** DELETE：登出（清除会话 cookie） */
 export async function DELETE() {
   const res = NextResponse.json({ success: true });
   res.cookies.set(SESSION_COOKIE, '', { httpOnly: true, maxAge: 0, path: '/' });
