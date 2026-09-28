@@ -4,6 +4,8 @@ import { NextResponse } from 'next/server';
 import { guardRequest } from '@/lib/api-guard';
 import { cmsRequestHeaders, parseDetail, parseDetailPageHtml } from '@/lib/cms-parser';
 import { fetchUpstream, getCache, setCache } from '@/lib/fetch-utils';
+import { checkBreaker, recordOutcome } from '@/lib/circuit-breaker';
+import { getKvCache } from '@/lib/kv-cache';
 import { checkUpstreamAllowed } from '@/lib/ssrf';
 import type { SourceConfig, VideoDetail } from '@/lib/types';
 
@@ -11,6 +13,12 @@ export const runtime = 'nodejs';
 
 /** 详情结果短缓存：换源测速/多人观看同一影片时避免重复打上游 */
 const DETAIL_CACHE_TTL = 60 * 1000;
+
+/** 详情 L2（KV）TTL：默认 6 小时（docs/01 §6），环境变量可覆盖 */
+const DETAIL_KV_TTL_S = (() => {
+  const n = parseInt(process.env.DETAIL_CACHE_TTL_SECONDS || '21600', 10);
+  return Number.isFinite(n) ? Math.min(Math.max(n, 60), 604_800) : 21_600;
+})();
 
 function parseSource(raw: string | null): SourceConfig | null {
   if (!raw) return null;
@@ -44,12 +52,29 @@ export async function GET(req: Request) {
   }
 
   try {
-    // 命中 60s 缓存直接返回（仅缓存成功拿到剧集的结果）
+    // 命中缓存直接返回（仅缓存成功拿到剧集的结果）
     const detailRootForCache = (source.detail || baseUrl || '').replace(/\/+$/, '');
     const cacheKey = `detail:${source.url}|${detailRootForCache}|${id}`;
     const cached = getCache<VideoDetail>(cacheKey);
     if (cached) {
-      return NextResponse.json(cached);
+      return NextResponse.json(cached, { headers: { 'X-Cache': 'memory' } });
+    }
+    const kv = await getKvCache();
+    if (kv) {
+      const kvCached = await kv.get<VideoDetail>(cacheKey);
+      if (kvCached) {
+        setCache(cacheKey, kvCached, DETAIL_CACHE_TTL); // 回填 L1
+        return NextResponse.json(kvCached, { headers: { 'X-Cache': 'kv' } });
+      }
+    }
+
+    // 熔断中的源直接短路，不再等它超时
+    const breaker = checkBreaker(source.url);
+    if (breaker.open) {
+      return NextResponse.json(
+        { error: `源近期连续失败已熔断，${Math.ceil(breaker.retryInMs / 1000)}s 后自动重试` },
+        { status: 503 }
+      );
     }
 
     // 用户可控地址发起服务端请求，先过 SSRF 校验（协议白名单 + 内网/保留地址）
@@ -95,11 +120,15 @@ export async function GET(req: Request) {
     }
 
     if (!resolved || resolved.episodes.length === 0) {
+      recordOutcome(source.url, false);
       return NextResponse.json({ error: '未找到播放资源' }, { status: 404 });
     }
+    recordOutcome(source.url, true);
     setCache(cacheKey, resolved, DETAIL_CACHE_TTL);
+    if (kv) await kv.put(cacheKey, resolved, DETAIL_KV_TTL_S);
     return NextResponse.json(resolved);
   } catch (err) {
+    recordOutcome(source.url, false);
     return NextResponse.json(
       { error: err instanceof Error ? err.message : '获取详情失败' },
       { status: 502 }

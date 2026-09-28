@@ -4,6 +4,8 @@ import { NextResponse } from 'next/server';
 import { guardRequest } from '@/lib/api-guard';
 import { cmsRequestHeaders, filterAdultResults, filterRelevantResults, normalizeTitle, parseSearchList } from '@/lib/cms-parser';
 import { fetchUpstream, getCache, setCache } from '@/lib/fetch-utils';
+import { checkBreaker, recordOutcome } from '@/lib/circuit-breaker';
+import { getKvCache, shouldCacheSearch } from '@/lib/kv-cache';
 import { checkUpstreamAllowed } from '@/lib/ssrf';
 import type { SearchResponse, SearchStreamEvent, SourceConfig, SourceSearchOutcome } from '@/lib/types';
 
@@ -17,6 +19,12 @@ interface SearchBody {
 
 /** 搜索结果短缓存：同一关键词 + 同一组源在 TTL 内直接返回（播放页返回搜索页等场景） */
 const SEARCH_CACHE_TTL = 60 * 1000;
+
+/** 搜索 L2（KV）TTL：默认 30 分钟（docs/01 §6），环境变量可覆盖 */
+const SEARCH_KV_TTL_S = (() => {
+  const n = parseInt(process.env.SEARCH_CACHE_TTL_SECONDS || '1800', 10);
+  return Number.isFinite(n) ? Math.min(Math.max(n, 60), 86_400) : 1800;
+})();
 
 /** 缓存键：wd + 成人过滤 + 排序后的源地址集合（直接用完整字符串，避免哈希碰撞串缓存） */
 function searchCacheKey(wd: string, sources: SourceConfig[], filterAdult: boolean): string {
@@ -51,6 +59,13 @@ function isTimeoutError(err: unknown): boolean {
   return candidates.some((e) => e instanceof Error && (e.name === 'TimeoutError' || e.name === 'AbortError'));
 }
 
+/** workerd 对连接失败抛 "internal error; reference = ..." 之类文本，转成用户可读信息 */
+function friendlyError(err: unknown): string {
+  const message = err instanceof Error ? err.message : '请求失败';
+  if (/internal error|fetch failed|network/i.test(message)) return '无法连接到源站';
+  return message;
+}
+
 /**
  * 服务端聚合搜索：并行请求所有选中源，任一源失败不影响整体。
  * 每个源先取第一页并读取 pagecount，再并行抓取后续页（上限 SEARCH_MAX_PAGES），
@@ -65,6 +80,17 @@ async function searchSource(source: SourceConfig, wd: string): Promise<SourceSea
 
   if (!/^https?:\/\//.test(source.url || '')) {
     return finish({ sourceKey: source.key, ok: false, list: [], error: '无效的源地址' });
+  }
+  // 熔断中的源直接短路（docs/01 §7.4）：不再等它超时，健康源的结果先出
+  const breaker = checkBreaker(source.url);
+  if (breaker.open) {
+    return finish({
+      sourceKey: source.key,
+      ok: false,
+      list: [],
+      error: `源近期连续失败已熔断，${Math.ceil(breaker.retryInMs / 1000)}s 后自动重试`,
+      circuitOpen: true,
+    });
   }
   // 用户可控地址发起服务端请求，必须先过 SSRF 校验（协议白名单 + 内网/保留地址）
   const verdict = await checkUpstreamAllowed(source.url);
@@ -132,17 +158,20 @@ async function searchSource(source: SourceConfig, wd: string): Promise<SourceSea
           sourceKey: source.key,
           ok: false,
           list: [],
-          error: err instanceof Error ? err.message : '请求失败',
+          error: friendlyError(err),
           timedOut: isTimeoutError(err),
         })
       );
-    return await Promise.race([runPromise, deadline]);
+    const outcome = await Promise.race([runPromise, deadline]);
+    recordOutcome(source.url, outcome.ok);
+    return outcome;
   } catch (err) {
+    recordOutcome(source.url, false);
     return finish({
       sourceKey: source.key,
       ok: false,
       list: [],
-      error: err instanceof Error ? err.message : '请求失败',
+      error: friendlyError(err),
       timedOut: isTimeoutError(err),
     });
   } finally {
@@ -209,24 +238,48 @@ export async function POST(req: Request) {
   const sources = body.sources.slice(0, 50);
   const filterAdult = body.filterAdult !== false;
 
+  const isStream = new URL(req.url).searchParams.get('stream') === '1';
   const cacheKey = searchCacheKey(wd, sources, filterAdult);
-  const cached = getCache<SearchResponse>(cacheKey);
-  if (cached) {
-    // 流式模式下缓存命中也要走 done 事件，客户端解析逻辑保持单一
-    if (new URL(req.url).searchParams.get('stream') === '1') {
-      const event: SearchStreamEvent = { type: 'done', list: cached.list, failures: cached.failures };
+
+  /** 缓存命中统一出口：流式模式也走 done 事件，客户端解析逻辑保持单一 */
+  const respondFromCache = (payload: SearchResponse, layer: 'memory' | 'kv') => {
+    if (isStream) {
+      const event: SearchStreamEvent = { type: 'done', list: payload.list, failures: payload.failures };
       return new Response(JSON.stringify(event) + '\n', {
-        headers: { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store' },
+        headers: {
+          'Content-Type': 'application/x-ndjson; charset=utf-8',
+          'Cache-Control': 'no-store',
+          'X-Cache': layer,
+        },
       });
     }
-    return NextResponse.json(cached);
+    return NextResponse.json(payload, { headers: { 'X-Cache': layer } });
+  };
+
+  // L1 内存缓存
+  const cached = getCache<SearchResponse>(cacheKey);
+  if (cached) return respondFromCache(cached, 'memory');
+
+  // L2 KV（仅缓存高频词，写侧受 shouldCacheSearch 门控）
+  const kv = await getKvCache();
+  if (kv) {
+    const kvCached = await kv.get<SearchResponse>(cacheKey);
+    if (kvCached) {
+      setCache(cacheKey, kvCached, SEARCH_CACHE_TTL); // 回填 L1
+      return respondFromCache(kvCached, 'kv');
+    }
   }
 
-  const isStream = new URL(req.url).searchParams.get('stream') === '1';
+  const persist = async (payload: SearchResponse): Promise<void> => {
+    setCache(cacheKey, payload, SEARCH_CACHE_TTL);
+    // 必须 await：Workers 在响应结束后会取消悬挂的 Promise（void 写法实测丢写）
+    if (kv && shouldCacheSearch(cacheKey)) await kv.put(cacheKey, payload, SEARCH_KV_TTL_S);
+  };
+
   if (!isStream) {
     const outcomes = await Promise.all(sources.map((source) => searchSource(source, wd)));
     const payload = aggregateOutcomes(outcomes, wd, filterAdult);
-    setCache(cacheKey, payload, SEARCH_CACHE_TTL);
+    await persist(payload);
     return NextResponse.json(payload);
   }
 
@@ -254,7 +307,7 @@ export async function POST(req: Request) {
       );
 
       const payload = aggregateOutcomes(outcomes, wd, filterAdult);
-      setCache(cacheKey, payload, SEARCH_CACHE_TTL);
+      await persist(payload);
       send({ type: 'done', list: payload.list, failures: payload.failures });
       closed = true;
       try {

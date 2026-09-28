@@ -20,7 +20,7 @@ database_name = "mytv-db"
 database_id = "c779fce0-b6ee-4827-a58d-d02416126f4e"
 migrations_dir = "migrations"
 
-# M3（KV 缓存）启用：
-# [[kv_namespaces]]
-# binding = "KV"
-# id = "<创建后填入>"
+# M3（KV 缓存）已启用：搜索/详情热数据缓存 + 熔断状态不落 KV（isolate 内存）
+[[kv_namespaces]]
+binding = "KV"
+id = "abf7efb92b754675b4656438a3d9c4f2"

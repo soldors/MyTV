@@ -62,6 +62,8 @@ export interface SourceSearchOutcome {
   error?: string;
   /** 因超时失败：源可能只是慢，前端以琥珀色区分于真正的失败 */
   timedOut?: boolean;
+  /** 熔断短路（源近期连续失败）：非本次请求的真实结果，前端可提示稍后再试 */
+  circuitOpen?: boolean;
   /** 该源搜索总耗时（ms），用于健康徽章 */
   ms?: number;
 }
