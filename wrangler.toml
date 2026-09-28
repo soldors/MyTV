@@ -1,0 +1,22 @@
+name = "mytv"
+main = ".open-next/worker.js"
+compatibility_date = "2026-09-28"
+compatibility_flags = ["nodejs_compat"]
+
+[assets]
+directory = ".open-next/assets"
+binding = "ASSETS"
+
+[vars]
+NEXT_PUBLIC_SITE_NAME = "MyTV"
+
+# M1（D1 数据层）启用：
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "mytv-db"
+# database_id = "<创建后填入>"
+
+# M3（KV 缓存）启用：
+# [[kv_namespaces]]
+# binding = "KV"
+# id = "<创建后填入>"

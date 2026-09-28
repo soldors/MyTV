@@ -1,0 +1,20 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 设计令牌（A 暗夜影院方向，见 docs/02-UI设计提案.md 7.3） */
+:root {
+  --bg: #0b0e14;
+  --elevated: #131822;
+  --overlay: #1b2230;
+  --accent: #e8112d;
+  --rating: #f5c518;
+  --text-1: #f2f4f8;
+  --text-2: #9aa3b2;
+  --text-3: #5c6675;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text-1);
+}
