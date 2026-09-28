@@ -2,7 +2,7 @@
 
 import { NextResponse } from 'next/server';
 import { guardRequest } from '@/lib/api-guard';
-import { isBlockedByDNS, isValidProxyUrl } from '@/lib/ssrf';
+import { checkUpstreamAllowed, isBlockedByDNS, isValidProxyUrl } from '@/lib/ssrf';
 import { fetchWithSafeRedirects } from '@/lib/fetch-utils';
 import { rewriteM3u8 } from '@/lib/m3u8';
 
@@ -50,10 +50,35 @@ function looksLikeImageUrl(target: string): boolean {
 }
 
 /**
+ * 部分采集站的 vod_play_url 给的不是 m3u8 而是 `/share/<id>` 网页播放器，
+ * 真实播放列表嵌在页面脚本里（`var main = "/.../index.m3u8?sign=..."`）。
+ * 代理遇到 text/html 且页面中可提取出 m3u8 地址时，转取该地址（过 SSRF 校验），
+ * 对播放器完全透明（懒解析，仅在真正点开某集时发生一次页面拉取）。
+ */
+function extractPlaylistFromHtml(html: string, baseUrl: string): string | null {
+  const patterns = [
+    /var\s+main\s*=\s*["']([^"']+\.m3u8[^"']*)["']/i,
+    /["']([^"']+\.m3u8[^"']*)["']/i,
+  ];
+  for (const re of patterns) {
+    const m = re.exec(html);
+    if (m) {
+      try {
+        return new URL(m[1], baseUrl).href;
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
+}
+
+/**
  * 通用流式代理：
  * - 已登录会话（httpOnly cookie）→ m3u8 重写后的分片同源请求自动携带；
  * - 未登录仅放行图片目标（豆瓣封面等），且同样受 SSRF 防护约束；
- * - m3u8 文本重写为代理路径，分片/key/map 全部经本站转发，规避上游 CORS。
+ * - m3u8 文本重写为代理路径，分片/key/map 全部经本站转发，规避上游 CORS；
+ * - share 播放器页自动解析出真实 m3u8 后代取（见 extractPlaylistFromHtml）。
  */
 export async function GET(req: Request, ctx: { params: Promise<{ url: string }> }) {
   const { url: encodedUrl } = await ctx.params;
@@ -105,10 +130,33 @@ export async function GET(req: Request, ctx: { params: Promise<{ url: string }> 
     );
   }
 
-  const contentType = response.headers.get('content-type') || '';
-  const isM3u8 =
+  let contentType = response.headers.get('content-type') || '';
+  let isM3u8 =
     contentType.includes('mpegurl') || contentType.includes('x-mpegurl') ||
     targetUrl.toLowerCase().endsWith('.m3u8');
+
+  // share 播放器页：HTML 中提取真实 m3u8 并代取（图片等其他 HTML 目标不受影响）
+  let wasHtml = false;
+  if (!isM3u8 && contentType.includes('text/html')) {
+    wasHtml = true;
+    const html = await response.text();
+    const playlist = extractPlaylistFromHtml(html, finalUrl);
+    if (playlist) {
+      const verdict = await checkUpstreamAllowed(playlist);
+      if (verdict.ok) {
+        const resolved = await fetchWithSafeRedirects(playlist, {
+          headers,
+          signal: AbortSignal.timeout(TIMEOUT_MS),
+        });
+        response = resolved.res;
+        finalUrl = resolved.finalUrl;
+        contentType = response.headers.get('content-type') || '';
+        isM3u8 =
+          contentType.includes('mpegurl') || contentType.includes('x-mpegurl') ||
+          playlist.toLowerCase().includes('.m3u8');
+      }
+    }
+  }
 
   // m3u8 文本：重写为代理路径（以重定向后的最终 URL 为 base 解析相对地址）
   if (isM3u8) {
@@ -130,7 +178,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ url: string }> 
     if (v) outHeaders.set(name, v);
   }
   // fetch 会自动解压，转发时必须去掉长度相关头避免浏览器二次解压
-  outHeaders.set('Cache-Control', 'public, max-age=3600');
+  outHeaders.set('Cache-Control', wasHtml ? 'no-store' : 'public, max-age=3600');
   outHeaders.set('Access-Control-Allow-Origin', '*');
 
   return new NextResponse(response.body, {

@@ -108,6 +108,50 @@ export interface AuthStatusResponse {
   defaultRecommendSource: 'douban' | 'bangumi' | 'hot-list' | null;
 }
 
+// —— 云端用户数据（M1 存储层 / M2 前台共用领域类型，实体定义见 lib/storage.ts 的 IStorage） ——
+
+/** 播放记录（联合唯一键：用户 + 源 + 影片，upsert 语义） */
+export interface PlayRecord {
+  source: string;
+  vodId: string;
+  title: string;
+  pic?: string;
+  episodeIndex: number;
+  totalTime: number;
+  playTime: number;
+  saveTime: number;
+}
+
+export interface FavoriteItem {
+  source: string;
+  vodId: string;
+  title: string;
+  pic?: string;
+  saveTime: number;
+}
+
+export interface SearchHistoryItem {
+  keyword: string;
+  createdAt: number;
+}
+
+/** 跳过片头片尾配置（秒） */
+export interface SkipConfig {
+  introStart: number;
+  introEnd: number;
+  outroStart: number;
+  outroEnd: number;
+}
+
+/** 站点级配置（admin_configs.config_json，M4 后台读写） */
+export interface SiteConfig {
+  siteName?: string;
+  announcement?: string;
+  registrationEnabled: boolean;
+  registrationApproval: boolean;
+  adultFilterEnabled: boolean;
+}
+
 // —— 直播 / IPTV ——
 
 /** 直播源（M3U 订阅）配置 */

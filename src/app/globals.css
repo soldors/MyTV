@@ -2,7 +2,7 @@
 @tailwind components;
 @tailwind utilities;
 
-/* 设计令牌（A 暗夜影院方向，见 docs/02-UI设计提案.md 7.3） */
+/* 设计令牌（A 暗夜影院方向，见 docs/02-UI设计提案.md 7.3）；一期仅暗色，令牌结构预留亮色 */
 :root {
   --bg: #0b0e14;
   --elevated: #131822;
@@ -17,4 +17,53 @@
 body {
   background: var(--bg);
   color: var(--text-1);
+}
+
+/* 横滑分区隐藏滚动条（海报行 / chips 行） */
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* 全局滚动条暗色化 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--overlay);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #2a3345;
+}
+
+/* 骨架屏 */
+.skeleton-shimmer {
+  background: linear-gradient(90deg, var(--elevated) 25%, #1a2130 37%, var(--elevated) 63%);
+  background-size: 800px 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+@keyframes shimmer {
+  0% {
+    background-position: -400px 0;
+  }
+  100% {
+    background-position: 400px 0;
+  }
+}
+
+/* 海报懒加载渐显 */
+.poster-img {
+  opacity: 0;
+  transition: opacity 0.4s ease;
+}
+.poster-img.loaded {
+  opacity: 1;
 }

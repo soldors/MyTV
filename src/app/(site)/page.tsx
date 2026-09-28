@@ -1,284 +1,271 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+// 首页（M2）：Hero 轮播（5s 自动切换 + 指示点）+ 继续观看 / 我的收藏分区行。
+// 推荐位（豆瓣榜/手动置顶）为二期；M2 首页内容来自登录用户的云端数据（docs/03 §6）。
 
-interface ProbeResult {
-  ok: boolean;
-  ms: number;
-  count?: number;
-  error?: string;
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { useEffect, useMemo, useState } from 'react';
+import { listFavorites, listRecords, type SessionUser } from '@/lib/client-api';
+import type { FavoriteItem, PlayRecord } from '@/lib/types';
+import { useSession } from '@/hooks/use-session';
+import { useRequireUser } from '@/hooks/use-require-user';
+import PosterCard from '@/components/site/poster-card';
+import { EmptyState, HeroSkeleton, RowSkeleton } from '@/components/site/empty-state';
+import { IconPlay, IconSearch } from '@/components/site/icons';
+import { cn } from '@/lib/utils';
+
+const HOT_KEYWORDS = ['庆余年', '流浪地球', '狂飙', '繁花', '三体', '漫长的季节'];
+
+function HeroSlide({ record, active }: { record: PlayRecord; active: boolean }) {
+  const progress = record.totalTime > 0 ? record.playTime / record.totalTime : 0;
+  const resume = progress > 0.02;
+  return (
+    <div
+      className={cn(
+        'absolute inset-0 transition-opacity duration-700',
+        active ? 'opacity-100' : 'pointer-events-none opacity-0'
+      )}
+    >
+      {record.pic ? (
+        // eslint-disable-next-line @next/next/no-img-element -- Hero 大图运行时才知道地址
+        <img
+          src={record.pic}
+          alt={record.title}
+          className="absolute inset-0 h-full w-full object-cover"
+          onError={(e) => {
+            (e.currentTarget as HTMLImageElement).style.display = 'none';
+          }}
+        />
+      ) : (
+        <div className="absolute inset-0 bg-gradient-to-br from-overlay to-bg" />
+      )}
+      {/* 左侧与底部渐变遮罩，保证文字可读 */}
+      <div className="absolute inset-0 bg-gradient-to-r from-bg/90 via-bg/50 to-transparent" />
+      <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-bg to-transparent" />
+
+      <div className="absolute inset-x-0 bottom-0 flex flex-col gap-3 p-6 pb-8 md:p-10 md:pb-12">
+        <span className="w-fit rounded-full bg-accent/90 px-2.5 py-1 text-[10px] font-medium text-white">
+          继续观看
+        </span>
+        <h2 className="max-w-xl text-2xl font-bold text-t1 md:text-4xl">{record.title}</h2>
+        <p className="text-xs text-t2 md:text-sm">
+          看到第 {record.episodeIndex + 1} 集 · {Math.round(progress * 100)}%
+        </p>
+        <div className="flex gap-3">
+          <Link
+            href={`/play/${encodeURIComponent(record.source)}/${encodeURIComponent(record.vodId)}?ep=${record.episodeIndex}`}
+            className="flex items-center gap-2 rounded-full bg-accent px-5 py-2.5 text-sm font-semibold text-white transition hover:opacity-90 md:px-7"
+          >
+            <IconPlay className="h-4 w-4" />
+            {resume ? '继续播放' : '立即播放'}
+          </Link>
+        </div>
+      </div>
+    </div>
+  );
 }
 
-interface SessionUser {
-  name: string;
-  role: string;
+function BrandHero() {
+  const router = useRouter();
+  const [wd, setWd] = useState('');
+  return (
+    <div className="relative flex h-[300px] flex-col items-center justify-center gap-5 overflow-hidden rounded-card bg-gradient-to-br from-overlay via-bg to-bg px-6 text-center md:h-[440px]">
+      <div
+        className="absolute left-1/2 top-1/2 h-[70vmin] w-[70vmin] -translate-x-1/2 -translate-y-1/2 rounded-full"
+        style={{ background: 'radial-gradient(circle, rgba(232,17,45,0.14) 0%, transparent 70%)' }}
+      />
+      <h2 className="text-3xl font-extrabold text-t1 md:text-5xl">
+        观影，从<span className="text-accent">搜索</span>开始
+      </h2>
+      <p className="text-xs text-t2 md:text-sm">聚合多路采集源 · 云端续看 · 多端同步</p>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          const q = wd.trim();
+          if (q) router.push(`/search?wd=${encodeURIComponent(q)}`);
+        }}
+        className="flex w-full max-w-xl items-center gap-2 rounded-full border border-overlay bg-elevated px-5 py-3"
+      >
+        <IconSearch className="h-5 w-5 shrink-0 text-t3" />
+        <input
+          value={wd}
+          onChange={(e) => setWd(e.target.value)}
+          placeholder="搜索影视名称，回车开始"
+          className="w-full bg-transparent text-sm text-t1 outline-none placeholder:text-t3"
+        />
+      </form>
+      <div className="flex max-w-xl flex-wrap justify-center gap-2">
+        {HOT_KEYWORDS.map((k) => (
+          <Link
+            key={k}
+            href={`/search?wd=${encodeURIComponent(k)}`}
+            className="rounded-full bg-overlay px-3 py-1.5 text-xs text-t2 transition hover:text-t1"
+          >
+            {k}
+          </Link>
+        ))}
+      </div>
+    </div>
+  );
 }
 
-export default function HomePage() {
-  const [user, setUser] = useState<SessionUser | null>(null);
-  const [authChecked, setAuthChecked] = useState(false);
-  const [password, setPassword] = useState('');
-  const [loginMsg, setLoginMsg] = useState('');
-  const [sourceUrl, setSourceUrl] = useState('https://cj.lziapi.com/api.php/provide/vod');
-  const [probe, setProbe] = useState<ProbeResult | null>(null);
-  const [probing, setProbing] = useState(false);
+function SectionRow({
+  title,
+  more,
+  children,
+}: {
+  title: string;
+  more?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="mt-10">
+      <div className="mb-4 flex items-baseline justify-between">
+        <h3 className="text-base font-semibold text-t1 md:text-lg">{title}</h3>
+        {more}
+      </div>
+      {children}
+    </section>
+  );
+}
 
-  const [regName, setRegName] = useState('');
-  const [regPassword, setRegPassword] = useState('');
-  const [userMsg, setUserMsg] = useState('');
-  const [recordsMsg, setRecordsMsg] = useState('');
-
-  const refreshAuth = useCallback(async () => {
-    try {
-      const res = await fetch('/api/auth');
-      const data = (await res.json()) as { verified?: boolean; user?: SessionUser | null };
-      setUser(data.verified && data.user ? data.user : null);
-    } catch {
-      setUser(null);
-    } finally {
-      setAuthChecked(true);
-    }
-  }, []);
+function HomeContent({ user }: { user: SessionUser }) {
+  const [records, setRecords] = useState<PlayRecord[] | null>(null);
+  const [favorites, setFavorites] = useState<FavoriteItem[] | null>(null);
+  const [heroIndex, setHeroIndex] = useState(0);
 
   useEffect(() => {
-    void refreshAuth();
-  }, [refreshAuth]);
+    let alive = true;
+    void listRecords().then((r) => alive && setRecords(r.list));
+    void listFavorites().then((f) => alive && setFavorites(f.list));
+    return () => {
+      alive = false;
+    };
+  }, []);
 
-  async function login() {
-    setLoginMsg('');
-    const res = await fetch('/api/auth', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password }),
-    });
-    const data = (await res.json()) as { success?: boolean; error?: string };
-    if (data.success) {
-      setLoginMsg('登录成功');
-      setPassword('');
-      await refreshAuth();
-    } else {
-      setLoginMsg(data.error || '登录失败');
-    }
-  }
+  const heroSlides = useMemo(() => (records ?? []).slice(0, 5), [records]);
 
-  async function logout() {
-    await fetch('/api/auth', { method: 'DELETE' });
-    setUser(null);
-    setRecordsMsg('');
-    await refreshAuth();
-  }
+  // Hero 轮播 5s 自动切换（多张时）
+  useEffect(() => {
+    if (heroSlides.length <= 1) return;
+    const timer = setInterval(() => setHeroIndex((i) => (i + 1) % heroSlides.length), 5000);
+    return () => clearInterval(timer);
+  }, [heroSlides.length]);
 
-  async function register() {
-    setUserMsg('');
-    const res = await fetch('/api/user/register', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: regName, password: regPassword }),
-    });
-    const data = (await res.json()) as { message?: string; error?: string };
-    setUserMsg(data.message || data.error || '注册失败');
-  }
-
-  async function userLogin() {
-    setUserMsg('');
-    const res = await fetch('/api/user/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: regName, password: regPassword }),
-    });
-    const data = (await res.json()) as { success?: boolean; error?: string };
-    if (data.success) {
-      setUserMsg('登录成功');
-      setRegPassword('');
-      await refreshAuth();
-    } else {
-      setUserMsg(data.error || '登录失败');
-    }
-  }
-
-  async function writeDemoRecord() {
-    setRecordsMsg('');
-    const res = await fetch('/api/records', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        source: 'lzi',
-        vodId: 'demo-001',
-        title: 'M1 演示记录',
-        episodeIndex: 1,
-        totalTime: 2700,
-        playTime: Math.floor(Math.random() * 2700),
-      }),
-    });
-    const data = (await res.json()) as { success?: boolean; error?: string };
-    setRecordsMsg(data.success ? '已写入（upsert demo-001）' : data.error || '写入失败');
-  }
-
-  async function readRecords() {
-    setRecordsMsg('');
-    const res = await fetch('/api/records');
-    if (!res.ok) {
-      setRecordsMsg('读取失败（未登录？）');
-      return;
-    }
-    const data = (await res.json()) as { list?: { title: string; playTime: number }[] };
-    const list = data.list ?? [];
-    setRecordsMsg(
-      list.length === 0
-        ? '云端暂无记录'
-        : `云端 ${list.length} 条：${list.map((r) => `${r.title}(${Math.floor(r.playTime)}s)`).join('、')}`
+  if (records === null || favorites === null) {
+    return (
+      <div className="py-6">
+        <HeroSkeleton />
+        <div className="mt-10 space-y-4">
+          <RowSkeleton />
+        </div>
+      </div>
     );
   }
 
-  async function runProbe() {
-    setProbing(true);
-    setProbe(null);
-    try {
-      const res = await fetch('/api/source/test', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: sourceUrl }),
-      });
-      setProbe((await res.json()) as ProbeResult);
-    } catch {
-      setProbe({ ok: false, ms: 0, error: '请求失败' });
-    } finally {
-      setProbing(false);
-    }
-  }
-
   return (
-    <main className="mx-auto flex min-h-screen max-w-2xl flex-col justify-center gap-6 px-6 py-10">
-      <div className="text-center">
-        <h1 className="text-4xl font-extrabold tracking-wide text-[#E8112D]">MyTV</h1>
-        <p className="mt-2 text-sm text-[#9AA3B2]">
-          M0 骨架 · M1 数据层验证页（M2 替换为正式首页）
-        </p>
-      </div>
-
-      <section className="rounded-xl border border-[#1B2230] bg-[#131822] p-5">
-        <h2 className="text-sm font-semibold text-[#F2F4F8]">1. 会话（站长 / 用户）</h2>
-        {!authChecked ? (
-          <p className="mt-2 text-sm text-[#9AA3B2]">检查中…</p>
-        ) : user ? (
-          <div className="mt-2 flex items-center justify-between">
-            <p className="text-sm text-[#3FB950]">
-              当前身份：{user.name}（{user.role}）
-            </p>
-            <button
-              onClick={() => void logout()}
-              className="rounded-lg border border-[#1B2230] px-3 py-1.5 text-xs text-[#9AA3B2] hover:text-[#F2F4F8]"
-            >
-              登出
-            </button>
-          </div>
-        ) : (
-          <div className="mt-3 flex gap-2">
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && void login()}
-              placeholder="站长密码（PASSWORD）"
-              className="flex-1 rounded-lg border border-[#1B2230] bg-[#0B0E14] px-3 py-2 text-sm outline-none focus:border-[#E8112D]"
-            />
-            <button
-              onClick={() => void login()}
-              className="rounded-lg bg-[#E8112D] px-4 py-2 text-sm font-medium text-white hover:opacity-90"
-            >
-              站长登录
-            </button>
-          </div>
-        )}
-        {loginMsg && <p className="mt-2 text-xs text-[#9AA3B2]">{loginMsg}</p>}
-      </section>
-
-      <section className="rounded-xl border border-[#1B2230] bg-[#131822] p-5">
-        <h2 className="text-sm font-semibold text-[#F2F4F8]">2. 多用户与云端记录（M1 · D1）</h2>
-        {!user ? (
-          <>
-            <div className="mt-3 flex gap-2">
-              <input
-                value={regName}
-                onChange={(e) => setRegName(e.target.value)}
-                placeholder="用户名（2-32 位字母数字）"
-                className="w-40 rounded-lg border border-[#1B2230] bg-[#0B0E14] px-3 py-2 text-sm outline-none focus:border-[#E8112D]"
-              />
-              <input
-                type="password"
-                value={regPassword}
-                onChange={(e) => setRegPassword(e.target.value)}
-                placeholder="密码（≥6 位）"
-                className="flex-1 rounded-lg border border-[#1B2230] bg-[#0B0E14] px-3 py-2 text-sm outline-none focus:border-[#E8112D]"
-              />
+    <div className="py-6">
+      {heroSlides.length > 0 ? (
+        <div className="relative h-[300px] overflow-hidden rounded-card md:h-[440px]">
+          {heroSlides.map((record, i) => (
+            <HeroSlide key={`${record.source}-${record.vodId}`} record={record} active={i === heroIndex} />
+          ))}
+          {heroSlides.length > 1 && (
+            <div className="absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 gap-1.5">
+              {heroSlides.map((_, i) => (
+                <button
+                  key={i}
+                  aria-label={`第 ${i + 1} 张`}
+                  onClick={() => setHeroIndex(i)}
+                  className={cn(
+                    'h-1.5 rounded-full transition-all',
+                    i === heroIndex ? 'w-5 bg-accent' : 'w-1.5 bg-white/40 hover:bg-white/70'
+                  )}
+                />
+              ))}
             </div>
-            <div className="mt-2 flex gap-2">
-              <button
-                onClick={() => void register()}
-                className="rounded-lg border border-[#E8112D] px-4 py-2 text-sm text-[#E8112D] hover:bg-[#E8112D]/10"
-              >
-                注册（默认需审批）
-              </button>
-              <button
-                onClick={() => void userLogin()}
-                className="rounded-lg bg-[#E8112D] px-4 py-2 text-sm font-medium text-white hover:opacity-90"
-              >
-                用户登录
-              </button>
-            </div>
-          </>
-        ) : (
-          <div className="mt-3 flex flex-wrap gap-2">
-            <button
-              onClick={() => void writeDemoRecord()}
-              className="rounded-lg bg-[#E8112D] px-4 py-2 text-sm font-medium text-white hover:opacity-90"
-            >
-              写入演示播放记录
-            </button>
-            <button
-              onClick={() => void readRecords()}
-              className="rounded-lg border border-[#1B2230] px-4 py-2 text-sm text-[#9AA3B2] hover:text-[#F2F4F8]"
-            >
-              读取云端记录
-            </button>
-          </div>
-        )}
-        {userMsg && <p className="mt-2 text-xs text-[#9AA3B2]">{userMsg}</p>}
-        {recordsMsg && <p className="mt-2 text-xs text-[#3FB950]">{recordsMsg}</p>}
-      </section>
-
-      <section className="rounded-xl border border-[#1B2230] bg-[#131822] p-5">
-        <h2 className="text-sm font-semibold text-[#F2F4F8]">3. 采集源探活（端到端）</h2>
-        <div className="mt-3 flex gap-2">
-          <input
-            value={sourceUrl}
-            onChange={(e) => setSourceUrl(e.target.value)}
-            placeholder="https://.../api.php/provide/vod"
-            className="flex-1 rounded-lg border border-[#1B2230] bg-[#0B0E14] px-3 py-2 text-sm outline-none focus:border-[#E8112D]"
-          />
-          <button
-            onClick={() => void runProbe()}
-            disabled={!user || probing}
-            className="rounded-lg bg-[#E8112D] px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {probing ? '探测中…' : '探活'}
-          </button>
+          )}
         </div>
-        {!user && <p className="mt-2 text-xs text-[#5C6675]">登录后可探测</p>}
-        {probe && (
-          <p className="mt-3 text-sm">
-            {probe.ok ? (
-              <span className="text-[#3FB950]">
-                可用 · 耗时 {probe.ms}ms · 结果 {probe.count} 条
-              </span>
-            ) : (
-              <span className="text-[#E8112D]">
-                不可用 · {probe.error}（{probe.ms}ms）
-              </span>
-            )}
-          </p>
-        )}
-      </section>
-    </main>
+      ) : (
+        <BrandHero />
+      )}
+
+      {records.length > 0 && (
+        <SectionRow
+          title="继续观看"
+          more={
+            <Link href="/my" className="text-xs text-t2 hover:text-t1">
+              全部 ({records.length})
+            </Link>
+          }
+        >
+          <div className="no-scrollbar -mx-4 flex gap-3 overflow-x-auto px-4 pb-1 md:-mx-6 md:gap-4 md:px-6">
+            {records.slice(0, 12).map((r) => (
+              <PosterCard
+                key={`${r.source}-${r.vodId}`}
+                title={r.title}
+                pic={r.pic}
+                remarks={`看到第 ${r.episodeIndex + 1} 集`}
+                progress={r.totalTime > 0 ? r.playTime / r.totalTime : 0}
+                href={`/play/${encodeURIComponent(r.source)}/${encodeURIComponent(r.vodId)}?ep=${r.episodeIndex}`}
+                className="w-[120px] shrink-0 md:w-[160px]"
+              />
+            ))}
+          </div>
+        </SectionRow>
+      )}
+
+      {favorites.length > 0 && (
+        <SectionRow
+          title="我的收藏"
+          more={
+            <Link href="/my" className="text-xs text-t2 hover:text-t1">
+              全部 ({favorites.length})
+            </Link>
+          }
+        >
+          <div className="no-scrollbar -mx-4 flex gap-3 overflow-x-auto px-4 pb-1 md:-mx-6 md:gap-4 md:px-6">
+            {favorites.slice(0, 12).map((f) => (
+              <PosterCard
+                key={`${f.source}-${f.vodId}`}
+                title={f.title}
+                pic={f.pic}
+                href={`/play/${encodeURIComponent(f.source)}/${encodeURIComponent(f.vodId)}`}
+                className="w-[120px] shrink-0 md:w-[160px]"
+              />
+            ))}
+          </div>
+        </SectionRow>
+      )}
+
+      {records.length === 0 && favorites.length === 0 && (
+        <EmptyState
+          title={`欢迎，${user.name}`}
+          hint="观看和收藏会显示在这里。先去搜索一部想看的影片吧。"
+          action={
+            <Link
+              href="/search"
+              className="mt-2 rounded-full bg-accent px-6 py-2.5 text-sm font-semibold text-white transition hover:opacity-90"
+            >
+              去搜索
+            </Link>
+          }
+        />
+      )}
+    </div>
   );
+}
+
+export default function HomePage() {
+  const { ready } = useRequireUser();
+  const { user } = useSession();
+  if (!ready || !user) {
+    return (
+      <div className="py-6">
+        <HeroSkeleton />
+      </div>
+    );
+  }
+  return <HomeContent user={user} />;
 }

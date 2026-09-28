@@ -9,6 +9,9 @@ binding = "ASSETS"
 
 [vars]
 NEXT_PUBLIC_SITE_NAME = "MyTV"
+# 预置采集源（M2 前台默认源；M4 后台交付后可在界面增删）
+# 格式与上游 LibreTV 一致：[{name, url, detail?, isAdult?}]
+DEFAULT_SOURCES = '[{"name":"量子资源","url":"https://cj.lziapi.com/api.php/provide/vod"}]'
 
 # M1（D1 数据层）已启用：本地状态在 .wrangler/state，远程已建库
 [[d1_databases]]

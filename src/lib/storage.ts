@@ -1,6 +1,17 @@
 // 存储抽象层（M1）：接口语义对照 LunaTV 的 IStorage（用户/播放记录/收藏/搜索历史/
 // 跳过片头片尾/管理员配置），仅借鉴语义不复制代码（其协议 CC BY-NC-SA，见 docs/01 §10）。
 // 实现见 lib/d1-storage.ts（Cloudflare D1）；设计基线 docs/01 §5 的 7 张表。
+// 领域实体类型（PlayRecord/FavoriteItem/…）定义在 lib/types.ts，供前后台共用。
+
+import type {
+  FavoriteItem,
+  PlayRecord,
+  SearchHistoryItem,
+  SiteConfig,
+  SkipConfig,
+} from './types';
+
+export type { FavoriteItem, PlayRecord, SearchHistoryItem, SiteConfig, SkipConfig };
 
 export type UserRole = 'user' | 'admin';
 export type UserStatus = 'pending' | 'active' | 'disabled';
@@ -17,54 +28,6 @@ export interface UserCredentials {
   passwordHash: string;
   salt: string;
   iterations: number;
-}
-
-/** 播放记录（联合唯一键：用户 + 源 + 影片，upsert 语义） */
-export interface PlayRecord {
-  source: string;
-  vodId: string;
-  title: string;
-  pic?: string;
-  episodeIndex: number;
-  totalTime: number;
-  playTime: number;
-  saveTime: number;
-}
-
-export interface FavoriteItem {
-  source: string;
-  vodId: string;
-  title: string;
-  pic?: string;
-  saveTime: number;
-}
-
-export interface SearchHistoryItem {
-  keyword: string;
-  createdAt: number;
-}
-
-/** 跳过片头片尾配置（秒） */
-export interface SkipConfig {
-  introStart: number;
-  introEnd: number;
-  outroStart: number;
-  outroEnd: number;
-}
-
-/**
- * 站点级配置（admin_configs.config_json）。
- * 一期键集：访问控制（#9）+ 内容过滤（#8）；M4 后台界面读写。
- */
-export interface SiteConfig {
-  siteName?: string;
-  announcement?: string;
-  /** 注册开关（关闭后 /api/user/register 拒绝） */
-  registrationEnabled: boolean;
-  /** 注册审批开关（开启时新用户 status=pending，需站长审批后方可登录） */
-  registrationApproval: boolean;
-  /** 成人源过滤默认值（#8：默认开） */
-  adultFilterEnabled: boolean;
 }
 
 export const DEFAULT_SITE_CONFIG: SiteConfig = {
