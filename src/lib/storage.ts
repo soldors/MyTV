@@ -164,8 +164,11 @@ export interface IStorage {
 
   // —— 数据源订阅（M4 后台） ——
   listSubscriptions(): Promise<SubscriptionRecord[]>;
+  /** 同 URL 重复添加时更新导入数；name 为空时保留旧名（不覆盖） */
   addSubscription(url: string, name?: string, importedCount?: number): Promise<SubscriptionRecord>;
   deleteSubscription(id: number): Promise<boolean>;
+  /** 修改订阅名称 */
+  renameSubscription(id: number, name: string): Promise<SubscriptionRecord | null>;
   /** 记录一次成功同步时间与本次导入源数 */
   touchSubscription(id: number, importedCount?: number): Promise<void>;
 

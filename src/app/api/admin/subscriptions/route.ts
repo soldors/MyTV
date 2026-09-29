@@ -115,6 +115,29 @@ export async function POST(req: Request) {
   }
 }
 
+/** PATCH：{id, name} 修改订阅名称 */
+export async function PATCH(req: Request) {
+  const guard = await requireAdmin(req);
+  if ('error' in guard) return guard.error;
+
+  let body: Record<string, unknown>;
+  try {
+    body = (await req.json()) as Record<string, unknown>;
+  } catch {
+    return jsonError('请求格式错误', 400);
+  }
+
+  const id = Math.trunc(Number(body.id) || 0);
+  const name = typeof body.name === 'string' ? body.name.trim() : '';
+  if (!id) return jsonError('缺少订阅 ID', 400);
+  if (!name || name.length > 64) return jsonError('无效的订阅名称', 400);
+
+  const storage = await getStorage();
+  const updated = await storage.renameSubscription(id, name);
+  if (!updated) return jsonError('订阅不存在', 404);
+  return NextResponse.json({ success: true, subscription: updated });
+}
+
 /** DELETE：?id= */
 export async function DELETE(req: Request) {
   const guard = await requireAdmin(req);

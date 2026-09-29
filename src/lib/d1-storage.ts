@@ -481,7 +481,9 @@ export class D1Storage implements IStorage {
       .prepare(
         `INSERT INTO subscriptions (url, name, last_synced_at, imported_count)
          VALUES (?1, ?2, ?3, ?4)
-         ON CONFLICT (url) DO UPDATE SET name = excluded.name, imported_count = excluded.imported_count`
+         ON CONFLICT (url) DO UPDATE SET
+           name = COALESCE(excluded.name, subscriptions.name),
+           imported_count = excluded.imported_count`
       )
       .bind(url, name ?? null, now, importedCount ?? null)
       .run();
@@ -490,6 +492,15 @@ export class D1Storage implements IStorage {
       .bind(url)
       .first<SubscriptionRow>();
     return mapSubscription(row as SubscriptionRow);
+  }
+
+  async renameSubscription(id: number, name: string): Promise<SubscriptionRecord | null> {
+    await this.db.prepare('UPDATE subscriptions SET name = ?2 WHERE id = ?1').bind(id, name).run();
+    const row = await this.db
+      .prepare('SELECT id, url, name, last_synced_at, imported_count FROM subscriptions WHERE id = ?1')
+      .bind(id)
+      .first<SubscriptionRow>();
+    return row ? mapSubscription(row) : null;
   }
 
   async deleteSubscription(id: number): Promise<boolean> {

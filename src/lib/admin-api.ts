@@ -71,6 +71,10 @@ export function resyncSubscription(id: number): Promise<{ imported: number; skip
   return fetchJson('/api/admin/subscriptions', jsonInit('POST', { id, action: 'resync' }));
 }
 
+export function renameSubscription(id: number, name: string): Promise<void> {
+  return fetchJson('/api/admin/subscriptions', jsonInit('PATCH', { id, name })).then(() => undefined);
+}
+
 export function deleteSubscription(id: number): Promise<void> {
   return fetchJson(`/api/admin/subscriptions?id=${id}`, { method: 'DELETE' }).then(() => undefined);
 }
