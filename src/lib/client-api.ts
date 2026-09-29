@@ -2,6 +2,7 @@
 // 服务端接口均为 M0/M1 交付（/api/search /api/detail /api/records /api/favorites …）。
 
 import type {
+  DoubanItem,
   FavoriteItem,
   LiveEpgResponse,
   LivePlaylistResponse,
@@ -185,6 +186,21 @@ export function saveSkipConfig(
   config: SkipConfig
 ): Promise<{ config: SkipConfig }> {
   return postJson('/api/skip', { source, vodId, ...config });
+}
+
+// —— 豆瓣推荐 / 热榜（首页内容分区） ——
+
+export function getDoubanRecommend(
+  type: 'movie' | 'tv',
+  tag: string,
+  pageSize = 24
+): Promise<{ items: DoubanItem[] }> {
+  const params = new URLSearchParams({ type, tag, pageSize: String(pageSize) });
+  return fetchJson(`/api/douban?${params.toString()}`);
+}
+
+export function getHotList(id: string): Promise<{ items: DoubanItem[] }> {
+  return fetchJson(`/api/hot-list?id=${encodeURIComponent(id)}`);
 }
 
 // —— 播放记录 ——

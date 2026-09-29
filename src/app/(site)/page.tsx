@@ -1,13 +1,20 @@
 'use client';
 
-// 首页（M2）：Hero 轮播（5s 自动切换 + 指示点）+ 继续观看 / 我的收藏分区行。
-// 推荐位（豆瓣榜/手动置顶）为二期；M2 首页内容来自登录用户的云端数据（docs/03 §6）。
+// 首页（M2 骨架 → 推荐位完整版，2026-09-29）：
+// Hero 轮播（优先「继续观看」，无记录时豆瓣热门电影）+ 分区行：
+// 继续观看 / 我的收藏（个人，D1）+ 热门电影 / 高分电影 / 热门剧集（豆瓣，10min 服务端缓存）。
+// 豆瓣条目无采集站 vodId，点击进入「按片名搜索」；采集站结果直达播放页。
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
-import { listFavorites, listRecords, type SessionUser } from '@/lib/client-api';
-import type { FavoriteItem, PlayRecord } from '@/lib/types';
+import {
+  getDoubanRecommend,
+  listFavorites,
+  listRecords,
+  type SessionUser,
+} from '@/lib/client-api';
+import type { DoubanItem, FavoriteItem, PlayRecord } from '@/lib/types';
 import { useSession } from '@/hooks/use-session';
 import { useRequireUser } from '@/hooks/use-require-user';
 import PosterCard from '@/components/site/poster-card';
@@ -17,9 +24,80 @@ import { cn } from '@/lib/utils';
 
 const HOT_KEYWORDS = ['庆余年', '流浪地球', '狂飙', '繁花', '三体', '漫长的季节'];
 
+/** 豆瓣条目行配置：tag 与豆瓣 search_subjects 的分类标签对齐 */
+const DOUBAN_ROWS = [
+  { key: 'hot-movie', title: '热门电影', type: 'movie' as const, tag: '热门' },
+  { key: 'top-movie', title: '高分电影', type: 'movie' as const, tag: '豆瓣高分' },
+  { key: 'hot-tv', title: '热门剧集', type: 'tv' as const, tag: '热门' },
+];
+
+/** 推荐位 Hero：海报居左 + 封面放大模糊作背景（豆瓣 cover 为竖版海报，直接铺满会糊） */
+function DoubanHeroSlide({ item, active }: { item: DoubanItem; active: boolean }) {
+  return (
+    <div
+      className={cn(
+        'absolute inset-0 transition-opacity duration-700',
+        active ? 'opacity-100' : 'pointer-events-none opacity-0'
+      )}
+    >
+      {item.cover ? (
+        // eslint-disable-next-line @next/next/no-img-element -- 豆瓣封面经 /api/proxy 白名单加载
+        <img
+          src={`/api/proxy/${encodeURIComponent(item.cover)}`}
+          alt={item.title}
+          className="absolute inset-0 h-full w-full scale-110 object-cover blur-md"
+          onError={(e) => {
+            (e.currentTarget as HTMLImageElement).style.display = 'none';
+          }}
+        />
+      ) : (
+        <div className="absolute inset-0 bg-gradient-to-br from-overlay to-bg" />
+      )}
+      {/* 压暗与融入页面底色 */}
+      <div className="absolute inset-0 bg-bg/70" />
+      <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-bg to-transparent" />
+
+      <div className="absolute inset-y-0 left-0 flex w-full items-center gap-6 p-6 md:gap-10 md:p-12">
+        {item.cover && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={`/api/proxy/${encodeURIComponent(item.cover)}`}
+            alt={item.title}
+            className="hidden h-[70%] max-h-[320px] rounded-poster object-cover shadow-card sm:block"
+          />
+        )}
+        <div className="flex min-w-0 max-w-xl flex-col gap-3">
+          <span className="w-fit rounded-full bg-accent/90 px-2.5 py-1 text-[10px] font-medium text-white">
+            {item.isTv ? '热门剧集' : '热门电影'}
+          </span>
+          <h2 className="truncate text-2xl font-bold text-t1 md:text-4xl">{item.title}</h2>
+          {item.rating && (
+            <p className="flex items-center gap-1.5 text-sm">
+              <span className="text-rating">★</span>
+              <span className="font-semibold text-rating">{item.rating}</span>
+            </p>
+          )}
+          <p className="hidden text-xs text-t2 md:block">
+            点击「立即观看」在采集源中搜索本片，多路线路即点即播
+          </p>
+          <div className="mt-1 flex gap-3">
+            <Link
+              href={`/search?wd=${encodeURIComponent(item.title)}`}
+              className="flex items-center gap-2 rounded-full bg-accent px-5 py-2.5 text-sm font-semibold text-white transition hover:opacity-90 md:px-7"
+            >
+              <IconPlay className="h-4 w-4" />
+              立即观看
+            </Link>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** 续看 Hero（个人记录） */
 function HeroSlide({ record, active }: { record: PlayRecord; active: boolean }) {
   const progress = record.totalTime > 0 ? record.playTime / record.totalTime : 0;
-  const resume = progress > 0.02;
   return (
     <div
       className={cn(
@@ -40,7 +118,6 @@ function HeroSlide({ record, active }: { record: PlayRecord; active: boolean }) 
       ) : (
         <div className="absolute inset-0 bg-gradient-to-br from-overlay to-bg" />
       )}
-      {/* 左侧与底部渐变遮罩，保证文字可读 */}
       <div className="absolute inset-0 bg-gradient-to-r from-bg/90 via-bg/50 to-transparent" />
       <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-bg to-transparent" />
 
@@ -58,7 +135,7 @@ function HeroSlide({ record, active }: { record: PlayRecord; active: boolean }) 
             className="flex items-center gap-2 rounded-full bg-accent px-5 py-2.5 text-sm font-semibold text-white transition hover:opacity-90 md:px-7"
           >
             <IconPlay className="h-4 w-4" />
-            {resume ? '继续播放' : '立即播放'}
+            {progress > 0.02 ? '继续播放' : '立即播放'}
           </Link>
         </div>
       </div>
@@ -130,21 +207,55 @@ function SectionRow({
   );
 }
 
+/** 横滑海报行（豆瓣条目：评分角标 + 点击搜索） */
+function DoubanRow({ items }: { items: DoubanItem[] }) {
+  return (
+    <div className="no-scrollbar -mx-4 flex gap-3 overflow-x-auto px-4 pb-1 md:-mx-6 md:gap-4 md:px-6">
+      {items.slice(0, 18).map((item) => (
+        <PosterCard
+          key={`${item.id}-${item.title}`}
+          title={item.title}
+          pic={item.cover ? `/api/proxy/${encodeURIComponent(item.cover)}` : undefined}
+          rating={item.rating}
+          remarks={item.isTv ? '剧集' : '电影'}
+          href={`/search?wd=${encodeURIComponent(item.title)}`}
+          className="w-[120px] shrink-0 md:w-[160px]"
+        />
+      ))}
+    </div>
+  );
+}
+
 function HomeContent({ user }: { user: SessionUser }) {
   const [records, setRecords] = useState<PlayRecord[] | null>(null);
   const [favorites, setFavorites] = useState<FavoriteItem[] | null>(null);
+  const [doubanRows, setDoubanRows] = useState<Record<string, DoubanItem[] | null>>({});
   const [heroIndex, setHeroIndex] = useState(0);
 
   useEffect(() => {
     let alive = true;
     void listRecords().then((r) => alive && setRecords(r.list));
     void listFavorites().then((f) => alive && setFavorites(f.list));
+    for (const row of DOUBAN_ROWS) {
+      void getDoubanRecommend(row.type, row.tag)
+        .then(({ items }) => alive && setDoubanRows((prev) => ({ ...prev, [row.key]: items })))
+        .catch(() => alive && setDoubanRows((prev) => ({ ...prev, [row.key]: [] })));
+    }
     return () => {
       alive = false;
     };
   }, []);
 
-  const heroSlides = useMemo(() => (records ?? []).slice(0, 5), [records]);
+  // Hero：个人续看优先，否则豆瓣热门电影，再否则品牌搜索 Hero
+  const heroSlides = useMemo(() => {
+    const recordSlides = (records ?? []).slice(0, 5).map((record) => ({ kind: 'record' as const, record }));
+    if (recordSlides.length > 0) return recordSlides;
+    const doubanSlides = (doubanRows['hot-movie'] ?? [])
+      .filter((item) => item.cover)
+      .slice(0, 5)
+      .map((item) => ({ kind: 'douban' as const, item }));
+    return doubanSlides;
+  }, [records, doubanRows]);
 
   // Hero 轮播 5s 自动切换（多张时）
   useEffect(() => {
@@ -153,24 +264,21 @@ function HomeContent({ user }: { user: SessionUser }) {
     return () => clearInterval(timer);
   }, [heroSlides.length]);
 
-  if (records === null || favorites === null) {
-    return (
-      <div className="py-6">
-        <HeroSkeleton />
-        <div className="mt-10 space-y-4">
-          <RowSkeleton />
-        </div>
-      </div>
-    );
-  }
+  const personalLoading = records === null || favorites === null;
+  const anyDoubanRow = DOUBAN_ROWS.some((row) => (doubanRows[row.key] ?? []).length > 0);
 
   return (
     <div className="py-6">
+      {/* Hero */}
       {heroSlides.length > 0 ? (
         <div className="relative h-[300px] overflow-hidden rounded-card md:h-[440px]">
-          {heroSlides.map((record, i) => (
-            <HeroSlide key={`${record.source}-${record.vodId}`} record={record} active={i === heroIndex} />
-          ))}
+          {heroSlides.map((slide, i) =>
+            slide.kind === 'record' ? (
+              <HeroSlide key={`${slide.record.source}-${slide.record.vodId}`} record={slide.record} active={i === heroIndex} />
+            ) : (
+              <DoubanHeroSlide key={`${slide.item.id}-${slide.item.title}`} item={slide.item} active={i === heroIndex} />
+            )
+          )}
           {heroSlides.length > 1 && (
             <div className="absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 gap-1.5">
               {heroSlides.map((_, i) => (
@@ -187,11 +295,14 @@ function HomeContent({ user }: { user: SessionUser }) {
             </div>
           )}
         </div>
+      ) : personalLoading || doubanRows['hot-movie'] === undefined ? (
+        <HeroSkeleton />
       ) : (
         <BrandHero />
       )}
 
-      {records.length > 0 && (
+      {/* 继续观看（个人） */}
+      {records !== null && records.length > 0 && (
         <SectionRow
           title="继续观看"
           more={
@@ -216,7 +327,8 @@ function HomeContent({ user }: { user: SessionUser }) {
         </SectionRow>
       )}
 
-      {favorites.length > 0 && (
+      {/* 我的收藏（个人） */}
+      {favorites !== null && favorites.length > 0 && (
         <SectionRow
           title="我的收藏"
           more={
@@ -239,10 +351,29 @@ function HomeContent({ user }: { user: SessionUser }) {
         </SectionRow>
       )}
 
-      {records.length === 0 && favorites.length === 0 && (
+      {/* 豆瓣推荐分区 */}
+      {DOUBAN_ROWS.map((row) => {
+        const items = doubanRows[row.key];
+        if (items === undefined) {
+          return (
+            <SectionRow key={row.key} title={row.title}>
+              <RowSkeleton />
+            </SectionRow>
+          );
+        }
+        if (items === null || items.length === 0) return null;
+        return (
+          <SectionRow key={row.key} title={row.title}>
+            <DoubanRow items={items} />
+          </SectionRow>
+        );
+      })}
+
+      {/* 全空引导 */}
+      {!personalLoading && !anyDoubanRow && records?.length === 0 && favorites?.length === 0 && (
         <EmptyState
           title={`欢迎，${user.name}`}
-          hint="观看和收藏会显示在这里。先去搜索一部想看的影片吧。"
+          hint="推荐内容暂不可用（豆瓣接口可能被源站限制）。先去搜索一部想看的影片吧。"
           action={
             <Link
               href="/search"
