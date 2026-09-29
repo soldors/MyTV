@@ -19,6 +19,7 @@ import {
 import type { DoubanItem, FavoriteItem, PlayRecord } from '@/lib/types';
 import { useSession } from '@/hooks/use-session';
 import { useRequireUser } from '@/hooks/use-require-user';
+import { getCached, isFresh, setCached } from '@/lib/swr-cache';
 import { DoubanHeroSlide } from '@/components/site/douban-hero';
 import PosterCard from '@/components/site/poster-card';
 import { EmptyState, HeroSkeleton, RowSkeleton } from '@/components/site/empty-state';
@@ -26,6 +27,10 @@ import { IconPlay, IconSearch } from '@/components/site/icons';
 import { cn } from '@/lib/utils';
 
 const HOT_KEYWORDS = ['庆余年', '流浪地球', '狂飙', '繁花', '三体', '漫长的季节'];
+
+/** 客户端 SWR 新鲜期：个人数据与推荐内容分开（见 lib/swr-cache） */
+const TTL_PERSONAL = 30 * 1000;
+const TTL_RECOMMEND = 5 * 60 * 1000;
 
 /** 豆瓣条目行配置：tag 与豆瓣 search_subjects 的分类标签对齐；
  *  fallbackHotList 为同名义的 60s API 周榜（数据中心出口稳定），豆瓣直连被限时兜底 */
@@ -185,9 +190,31 @@ function HomeContent({ user }: { user: SessionUser }) {
 
   useEffect(() => {
     let alive = true;
-    void listRecords().then((r) => alive && setRecords(r.list));
-    void listFavorites().then((f) => alive && setFavorites(f.list));
+
+    // 客户端 SWR（lib/swr-cache）：导航回首页秒出缓存，过期项后台刷新。
+    // 个人数据 30s 新鲜、推荐内容 5min 新鲜（服务端还有一层 10min 缓存兜着）。
+    const cachedRecords = getCached<PlayRecord[]>('home:records');
+    if (cachedRecords) setRecords(cachedRecords);
+    if (!cachedRecords || !isFresh('home:records', TTL_PERSONAL)) {
+      void listRecords().then((r) => {
+        setCached('home:records', r.list);
+        if (alive) setRecords(r.list);
+      });
+    }
+    const cachedFavorites = getCached<FavoriteItem[]>('home:favorites');
+    if (cachedFavorites) setFavorites(cachedFavorites);
+    if (!cachedFavorites || !isFresh('home:favorites', TTL_PERSONAL)) {
+      void listFavorites().then((f) => {
+        setCached('home:favorites', f.list);
+        if (alive) setFavorites(f.list);
+      });
+    }
+
     for (const row of DOUBAN_ROWS) {
+      const key = `home:douban:${row.key}`;
+      const cachedRow = getCached<DoubanItem[]>(key);
+      if (cachedRow) setDoubanRows((prev) => ({ ...prev, [row.key]: cachedRow }));
+      if (cachedRow && isFresh(key, TTL_RECOMMEND)) continue;
       void (async () => {
         let items: DoubanItem[] = [];
         try {
@@ -202,18 +229,26 @@ function HomeContent({ user }: { user: SessionUser }) {
             /* 兜底也失败则隐藏该行 */
           }
         }
+        setCached(key, items);
         if (alive) setDoubanRows((prev) => ({ ...prev, [row.key]: items }));
       })();
     }
+
     // Bangumi 放送表：取「今天」的新番行（1=周一…7=周日）
-    void getBangumiCalendar()
-      .then((days: Record<number, DoubanItem[]>) => {
-        if (!alive) return;
-        const jsDay = new Date().getDay(); // 0=周日
-        const weekday = jsDay === 0 ? 7 : jsDay;
-        setBangumiToday(days[weekday] ?? []);
-      })
-      .catch(() => alive && setBangumiToday([]));
+    const cachedBangumi = getCached<DoubanItem[]>('home:bangumi');
+    if (cachedBangumi) setBangumiToday(cachedBangumi);
+    if (!cachedBangumi || !isFresh('home:bangumi', TTL_RECOMMEND)) {
+      void getBangumiCalendar()
+        .then((days: Record<number, DoubanItem[]>) => {
+          if (!alive) return;
+          const jsDay = new Date().getDay(); // 0=周日
+          const weekday = jsDay === 0 ? 7 : jsDay;
+          const todayItems = days[weekday] ?? [];
+          setCached('home:bangumi', todayItems);
+          setBangumiToday(todayItems);
+        })
+        .catch(() => alive && setBangumiToday(cachedBangumi ?? []));
+    }
     return () => {
       alive = false;
     };
