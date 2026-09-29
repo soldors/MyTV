@@ -2,7 +2,8 @@
 
 // 数据源管理（M6 重写，docs/09 §1.3）：搜索框 + 状态筛选 + 分页 + 编辑弹窗 +
 // 状态列常亮（source_catalog 探活快照 join）+ 收录数列 + 「刷新收录量」+
-// env 预置源并入同表（「来源」列区分，只读行不给编辑/删除，D8）。
+// env 预置源并入同表（「来源」列区分；编辑仅限 db 行，删除两者皆可——
+// env 源删除走 hiddenEnvSources 覆盖层，底部可恢复）。
 // 订阅导入移至独立页 /admin/subscriptions（A4）。
 
 import Link from 'next/link';
@@ -14,6 +15,7 @@ import {
   listAdminSources,
   probeSource,
   refreshCatalog,
+  restoreEnvSource,
   updateSource,
   type SourceHealthEntry,
 } from '@/lib/admin-api';
@@ -170,10 +172,12 @@ export default function AdminSourcesPage() {
   const [confirmingKey, setConfirmingKey] = useState<string | null>(null);
   const [catalogBusy, setCatalogBusy] = useState(false);
   const [catalogMsg, setCatalogMsg] = useState('');
+  /** 已删除（屏蔽）的 env 源，供底部恢复入口展示 */
+  const [hiddenEnv, setHiddenEnv] = useState<{ name: string; url: string }[]>([]);
 
   const reload = useCallback(() => {
     void Promise.all([listAdminSources(), getSourceHealth(7)])
-      .then(([{ dbSources, envSources }, { byUrl }]) => {
+      .then(([{ dbSources, envSources, hiddenEnvSources }, { byUrl }]) => {
         const toRow = (
           r: { key: string; name: string; url?: string; apiUrl?: string; weight?: number; isAdult?: boolean; enabled?: boolean },
           origin: 'db' | 'env'
@@ -199,6 +203,7 @@ export default function AdminSourcesPage() {
           ...envSources.map((s) => toRow({ key: `env:${s.url}`, ...s }, 'env')),
         ]);
         setDbRecords(dbSources);
+        setHiddenEnv(hiddenEnvSources ?? []);
       })
       .catch(() => setRows([]));
   }, []);
@@ -256,6 +261,15 @@ export default function AdminSourcesPage() {
       reload();
     } finally {
       setConfirmingKey(null);
+    }
+  }
+
+  async function restoreEnv(url: string) {
+    try {
+      await restoreEnvSource(url);
+      reload();
+    } catch {
+      /* 列表刷新呈现真实状态 */
     }
   }
 
@@ -442,17 +456,17 @@ export default function AdminSourcesPage() {
                         >
                           <IconEdit className="inline h-3.5 w-3.5" />
                         </button>
-                        <button
-                          onClick={() => (confirmingKey === r.key ? void remove(r) : setConfirmingKey(r.key))}
-                          className={cn(
-                            'ml-1.5 rounded-lg px-2.5 py-1 text-xs transition',
-                            confirmingKey === r.key ? 'bg-accent text-white' : 'border border-overlay text-t2 hover:text-accent'
-                          )}
-                        >
-                          {confirmingKey === r.key ? '确认' : '删除'}
-                        </button>
                       </>
                     )}
+                    <button
+                      onClick={() => (confirmingKey === r.key ? void remove(r) : setConfirmingKey(r.key))}
+                      className={cn(
+                        'ml-1.5 rounded-lg px-2.5 py-1 text-xs transition',
+                        confirmingKey === r.key ? 'bg-accent text-white' : 'border border-overlay text-t2 hover:text-accent'
+                      )}
+                    >
+                      {confirmingKey === r.key ? '确认' : '删除'}
+                    </button>
                   </td>
                 </tr>
               );
@@ -494,8 +508,24 @@ export default function AdminSourcesPage() {
       )}
 
       <p className="mt-4 text-[11px] leading-relaxed text-t3">
-        状态与收录数来自最近一次探活/收录刷新快照（source_catalog）；可用率趋势见仪表盘。环境变量源（DEFAULT_SOURCES）只读，修改需调整环境变量并重新部署。
+        状态与收录数来自最近一次探活/收录刷新快照（source_catalog）；可用率趋势见仪表盘。环境变量源（DEFAULT_SOURCES）来自部署配置，删除后从搜索与源列表隐藏（可随时恢复），重新新增需调整环境变量并重新部署。
       </p>
+      {hiddenEnv.length > 0 && (
+        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-overlay/60 bg-elevated px-3 py-2">
+          <span className="text-[11px] text-t3">已删除的环境变量源：</span>
+          {hiddenEnv.map((s) => (
+            <span key={s.url} className="flex items-center gap-1.5 rounded-full bg-overlay px-2.5 py-1 text-[11px] text-t2">
+              {s.name}
+              <button
+                onClick={() => void restoreEnv(s.url)}
+                className="text-accent transition hover:opacity-80"
+              >
+                恢复
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

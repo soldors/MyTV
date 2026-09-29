@@ -8,7 +8,7 @@ import { getEnvSources } from '@/lib/env-sources';
 
 export const runtime = 'nodejs';
 
-/** GET：全部源（DB 可管理 + env 只读参考） */
+/** GET：全部源（DB 可管理 + env 只读参考；env 源被删除的进 hiddenEnvSources 供恢复） */
 export async function GET(req: Request) {
   const guard = await requireAdmin(req);
   if ('error' in guard) return guard.error;
@@ -16,9 +16,15 @@ export async function GET(req: Request) {
   const storage = await getStorage();
   const dbSources = await storage.listApiSources();
   const envSources = getEnvSources();
+  const hidden = new Set((await storage.getSiteConfig().catch(() => undefined))?.hiddenEnvSources ?? []);
   return NextResponse.json({
     dbSources,
-    envSources: envSources.map((s) => ({ name: s.name, url: s.url, isAdult: s.isAdult === true })),
+    envSources: envSources
+      .filter((s) => !hidden.has(s.url))
+      .map((s) => ({ name: s.name, url: s.url, isAdult: s.isAdult === true })),
+    hiddenEnvSources: envSources
+      .filter((s) => hidden.has(s.url))
+      .map((s) => ({ name: s.name, url: s.url })),
   });
 }
 
@@ -34,7 +40,7 @@ function checkUrl(url: unknown): string | null {
   }
 }
 
-/** POST：新增数据源 {name, url, detail?, isAdult?, weight?} */
+/** POST：新增数据源 {name, url, detail?, isAdult?, weight?}；{action:'restoreEnvSource', url} 恢复被删的 env 源 */
 export async function POST(req: Request) {
   const guard = await requireAdmin(req);
   if ('error' in guard) return guard.error;
@@ -44,6 +50,18 @@ export async function POST(req: Request) {
     body = (await req.json()) as Record<string, unknown>;
   } catch {
     return jsonError('请求格式错误', 400);
+  }
+
+  if (body.action === 'restoreEnvSource') {
+    const url = typeof body.url === 'string' ? body.url.trim() : '';
+    const exists = getEnvSources().some((s) => s.url === url);
+    if (!url || !exists) return jsonError('未找到该环境变量源', 404);
+    const storage = await getStorage();
+    const current = (await storage.getSiteConfig()).hiddenEnvSources ?? [];
+    await storage.saveSiteConfig({
+      hiddenEnvSources: current.filter((u) => u !== url),
+    });
+    return NextResponse.json({ success: true });
   }
 
   const name = typeof body.name === 'string' ? body.name.trim() : '';
@@ -116,13 +134,24 @@ export async function PATCH(req: Request) {
   return NextResponse.json({ success: true, source: updated });
 }
 
-/** DELETE：?key= */
+/** DELETE：?key=（db 源）；?key=env:<url>（环境变量源 → 写入屏蔽覆盖层） */
 export async function DELETE(req: Request) {
   const guard = await requireAdmin(req);
   if ('error' in guard) return guard.error;
 
   const key = new URL(req.url).searchParams.get('key') || '';
   if (!key) return jsonError('缺少源标识', 400);
+
+  if (key.startsWith('env:')) {
+    const url = key.slice(4);
+    if (!getEnvSources().some((s) => s.url === url)) return jsonError('未找到该环境变量源', 404);
+    const storage = await getStorage();
+    const current = (await storage.getSiteConfig()).hiddenEnvSources ?? [];
+    if (!current.includes(url)) {
+      await storage.saveSiteConfig({ hiddenEnvSources: [...current, url] });
+    }
+    return NextResponse.json({ success: true });
+  }
 
   const storage = await getStorage();
   const removed = await storage.deleteApiSource(key);

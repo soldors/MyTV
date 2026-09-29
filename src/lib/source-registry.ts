@@ -9,6 +9,7 @@ import type { SourceConfig } from './types';
 export async function listVodSources(): Promise<SourceConfig[]> {
   const envSources = getEnvSources();
   let dbSources: SourceConfig[] = [];
+  let hiddenUrls = new Set<string>();
   try {
     const storage = await getStorage();
     const records = await storage.listApiSources();
@@ -21,9 +22,11 @@ export async function listVodSources(): Promise<SourceConfig[]> {
         detail: r.detailUrl,
         isAdult: r.isAdult,
       }));
+    // env 源被站长删除后以覆盖层屏蔽（前台搜索/源列表一并生效）
+    hiddenUrls = new Set((await storage.getSiteConfig()).hiddenEnvSources ?? []);
   } catch {
     // DB 不可用时仍返回 env 源，与 /api/sources 的降级行为一致
   }
   const seenUrls = new Set(envSources.map((s) => s.url));
-  return [...envSources, ...dbSources.filter((s) => !seenUrls.has(s.url))];
+  return [...envSources.filter((s) => !hiddenUrls.has(s.url)), ...dbSources.filter((s) => !seenUrls.has(s.url))];
 }

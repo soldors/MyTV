@@ -167,6 +167,8 @@ export interface SiteConfig {
   adultFilterWords?: string[];
   /** 搜索每源最大抓取页数（1-50；未设置时回落 SEARCH_MAX_PAGES 环境变量） */
   searchMaxPages?: number;
+  /** 已删除（屏蔽）的环境变量预置源 URL（DEFAULT_SOURCES 只读，删除以覆盖层实现） */
+  hiddenEnvSources?: string[];
 }
 
 // —— 直播 / IPTV ——

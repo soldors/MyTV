@@ -21,8 +21,14 @@ function jsonInit(method: string, body: unknown): RequestInit {
 export function listAdminSources(): Promise<{
   dbSources: ApiSourceRecord[];
   envSources: { name: string; url: string; isAdult: boolean }[];
+  hiddenEnvSources: { name: string; url: string }[];
 }> {
   return fetchJson('/api/admin/sources');
+}
+
+/** 恢复被删除的环境变量预置源 */
+export function restoreEnvSource(url: string): Promise<void> {
+  return fetchJson('/api/admin/sources', jsonInit('POST', { action: 'restoreEnvSource', url })).then(() => undefined);
 }
 
 export function createSource(input: {
