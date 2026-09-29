@@ -12,7 +12,8 @@ const M3U8_PATTERN = /\$https?:\/\/[^"'\s]+?\.m3u8/g;
 const UA_HEADERS = {
   'User-Agent':
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-  Accept: 'application/json',
+  // JSON 与 XML（海洋CMS 等）采集站都要能协商，不能只声明 JSON
+  Accept: 'application/json, text/xml, */*',
 };
 
 export function cmsRequestHeaders(): Record<string, string> {

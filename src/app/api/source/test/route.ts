@@ -7,6 +7,7 @@ import { guardRequest } from '@/lib/api-guard';
 import { checkUpstreamAllowed } from '@/lib/ssrf';
 import { fetchUpstream } from '@/lib/fetch-utils';
 import { parseSearchList } from '@/lib/cms-parser';
+import { parseCmsPagePayload } from '@/lib/cms-xml';
 import { getStorage } from '@/lib/d1-storage';
 
 export const runtime = 'nodejs';
@@ -45,16 +46,17 @@ export async function POST(req: Request) {
 
   const start = Date.now();
   try {
-    const res = await fetchUpstream(`${url}?ac=videolist&wd=test`, {
+    const joiner = url.includes('?') ? '&' : '?';
+    const res = await fetchUpstream(`${url}${joiner}ac=videolist&wd=test`, {
       timeoutMs: 6000,
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36', Accept: 'application/json' },
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36', Accept: 'application/json, text/xml, */*' },
     });
     const ms = Date.now() - start;
     if (!res.ok) {
       await rememberProbe(url, false, ms);
       return NextResponse.json({ ok: false, ms, error: `HTTP ${res.status}` });
     }
-    const data = await res.json();
+    const data = parseCmsPagePayload(await res.text());
     const list = parseSearchList(data, { key: 'test', name: 'test', url });
     await rememberProbe(url, true, ms);
     return NextResponse.json({ ok: true, ms, count: list.length });

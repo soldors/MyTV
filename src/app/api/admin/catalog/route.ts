@@ -6,6 +6,7 @@
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/api-guard';
 import { cmsRequestHeaders } from '@/lib/cms-parser';
+import { parseCmsPagePayload } from '@/lib/cms-xml';
 import { getStorage } from '@/lib/d1-storage';
 import { fetchUpstream } from '@/lib/fetch-utils';
 import { checkUpstreamAllowed } from '@/lib/ssrf';
@@ -48,7 +49,7 @@ export async function POST(req: Request) {
           });
           const ms = Date.now() - start;
           if (!res.ok) return { ok: false, ms, total: undefined };
-          const total = readTotal(await res.json());
+          const total = readTotal(parseCmsPagePayload(await res.text()));
           return { ok: true, ms, total };
         } catch {
           return { ok: false, ms: Date.now() - start, total: undefined };

@@ -15,12 +15,14 @@ import {
  * 使同一份订阅入口同时兼容 LibreTV-SourceList 与 TVBOX 两种格式。
  *
  * 仅导入「直连类」条目（与本站现有能力对齐）：
- * - 点播：type=1 的 JSON 接口（即 Apple CMS 采集站）；部分共享配置省略 type 或写成 0，
- *   但地址命中 Apple CMS 特征时一并宽容导入；
+ * - 点播：type=1 的 JSON 接口与 type=0 的 XML 接口（均为 Apple CMS 形态采集站，
+ *   响应嗅探自动分派解析，见 cms-xml）；部分共享配置省略 type 但地址命中
+ *   Apple CMS 特征时一并宽容导入；
  * - 直播：type=0（或省略）的 M3U 播放列表，可带 EPG 节目单地址。
  *
- * Spider 类（csp_xxx / jar / js / py）需要 TVBOX 引擎才能在 Node 侧运行，XML 接口、
- * 单仓 JSON 与 txt 频道列表本站同样不支持：一律跳过并计入统计，不阻断其余条目导入。
+ * Spider 类（csp_xxx / jar / js / py）需要 TVBOX 引擎才能在 Node 侧运行，
+ * 非 CMS 的 XML 接口、单仓 JSON 与 txt 频道列表本站无法解析：
+ * 一律跳过并计入统计，不阻断其余条目导入。
  *
  * 本模块只做字段裁剪、去重与上限控制，不涉及网络与 SSRF（由调用方负责校验）。
  */
@@ -40,9 +42,10 @@ const SPIDER_PATTERN = /^csp_|\.(?:jar|js|py)(?:[?#].*)?$/i;
 const LOCAL_ASSET_PATTERN = /^\.{0,2}\//;
 /**
  * Apple CMS 直连接口特征（type 缺失或写成 XML / 外链时用于宽容识别）：
- * 需为 api.php/provide/vod 接口，且排除 XML 通道（/at/xml）——后者本站解析不了。
+ * 需为 api.php/provide/vod 接口。XML 通道（/at/xml）与海洋CMS 站（type=0）
+ * 现已由响应嗅探解析（cms-xml），一并放行。
  */
-const CMS_API_PATTERN = /\/api\.php\/provide\/vod(?![^?#]*\/at\/xml)(?:[/?#]|$)/i;
+const CMS_API_PATTERN = /\/api\.php\/provide\/vod(?:\/at\/xml)?(?:[/?#]|$)/i;
 /** M3U 播放列表特征 */
 const M3U_PATTERN = /\.m3u8?(?:[?#].*)?$/i;
 /** 纯文本频道列表特征（TVBOX 的 txt 直播源，本站无法解析） */
@@ -319,6 +322,7 @@ function collectVodSources(rawSites: unknown[], skipped: SkipCounter) {
     }
 
     // 可导入判定：显式 JSON 接口，或类型缺失/写成 XML、外链但地址命中 Apple CMS 特征
+    // （XML 形态的 Apple CMS 站由响应嗅探解析，与 JSON 站同路）
     const importable =
       type === SITE_TYPE_JSON ||
       ((type === undefined || type === SITE_TYPE_XML || type === SITE_TYPE_API) && CMS_API_PATTERN.test(api));

@@ -1,6 +1,6 @@
 # MyTV
 
-在线影视聚合平台：Cloudflare Workers（OpenNext）+ D1 + 苹果CMS 采集源；前端与后台界面自研。
+在线影视聚合平台：Cloudflare Workers（OpenNext）+ D1 + 苹果CMS 采集源（JSON/XML 接口自适应，兼容海洋CMS、飞飞CMS 等 RSS 5.1 形态）；前端与后台界面自研。
 
 - 设计基线：`docs/01-总体设计方案.md`（15 条拍板结论）
 - UI 设计：`docs/02-UI设计提案.md`（A 暗夜影院，18 张高保真稿见 `docs/design/`）

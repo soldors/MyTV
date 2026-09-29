@@ -3,6 +3,7 @@
 import { NextResponse } from 'next/server';
 import { guardRequest } from '@/lib/api-guard';
 import { cmsRequestHeaders, parseDetail, parseDetailPageHtml } from '@/lib/cms-parser';
+import { parseCmsPagePayload } from '@/lib/cms-xml';
 import { fetchUpstream, getCache, setCache } from '@/lib/fetch-utils';
 import { checkBreaker } from '@/lib/circuit-breaker';
 import { reportSourceOutcome } from '@/lib/source-health';
@@ -87,19 +88,28 @@ export async function GET(req: Request) {
 
     let resolved: VideoDetail | null = null;
 
-    // 1) 标准列表接口
-    const api = `${source.url.replace(/\/+$/, '')}?ac=videolist&ids=${encodeURIComponent(id)}`;
+    // 1) 标准列表接口（query 拼接兼容带 at=xml 等参数的源地址）
+    const joiner = source.url.includes('?') ? '&' : '?';
+    const api = `${source.url.replace(/\/+$/, '')}${joiner}ac=videolist&ids=${encodeURIComponent(id)}`;
     const res = await fetchUpstream(api, { timeoutMs: 10000, headers: cmsRequestHeaders() });
     if (res.ok) {
-      const data = await res.json();
+      let data: unknown;
       try {
-        const detail = parseDetail(data, source);
-        if (detail.episodes.length > 0) {
-          resolved = detail;
-        }
-        // 有详情但无播放地址 → 继续尝试详情页
+        // 同一 URL 形态下 JSON 站与 XML 站（海洋CMS 等）按响应体分派解析
+        data = parseCmsPagePayload(await res.text());
       } catch {
-        // 列表接口无内容 → 继续尝试详情页
+        data = undefined; // 响应体既非 JSON 也非可解析 XML → 继续尝试详情页
+      }
+      if (data !== undefined) {
+        try {
+          const detail = parseDetail(data, source);
+          if (detail.episodes.length > 0) {
+            resolved = detail;
+          }
+          // 有详情但无播放地址 → 继续尝试详情页
+        } catch {
+          // 列表接口无内容 → 继续尝试详情页
+        }
       }
     }
 
