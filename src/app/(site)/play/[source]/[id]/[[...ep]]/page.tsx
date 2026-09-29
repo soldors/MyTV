@@ -177,15 +177,34 @@ function PlayPageInner({ source: sourceKeyRaw, id, epPath }: { source: string; i
     setEpisodeIndex((prev) => Math.min(prev, lines[index].episodes.length - 1));
   }
 
-  /** 换源候选：以当前标题聚合搜索，只保留同名影片（服务端缓存使搜索页跳转来的请求近零开销） */
+  /** 换源候选：以当前标题聚合搜索同名影片，并逐源验证详情可出剧集——
+   *  不通的源（搜索失败/详情拿不到播放地址）不展示。服务端搜索与详情均有缓存，
+   *  从搜索页跳转来的请求近零开销；验证失败顺带进入熔断统计。 */
   async function loadSourceCandidates() {
     if (!info?.title) return;
     setSourceSearching(true);
     try {
       const { sources } = await getSources();
+      const configOf = new Map(sources.map((s) => [s.key, s]));
       const res = await searchStream({ wd: info.title, sources });
       const current = normalizeTitle(info.title);
-      setSourceCandidates(res.list.filter((i) => normalizeTitle(i.name || '') === current));
+      const sameTitle = res.list.filter((i) => normalizeTitle(i.name || '') === current);
+
+      // 当前源必然可用；其余候选并行验证详情，拿不到剧集的丢弃
+      const checked = await Promise.all(
+        sameTitle.map(async (item) => {
+          if (item.sourceKey === sourceKey && item.vodId === vodId) return item;
+          const config = configOf.get(item.sourceKey);
+          if (!config) return null;
+          try {
+            const d = await getDetail(config, item.vodId);
+            return d.episodes.length > 0 ? item : null;
+          } catch {
+            return null;
+          }
+        })
+      );
+      setSourceCandidates(checked.filter((item): item is SearchResultItem => item !== null));
     } catch {
       setSourceCandidates([]);
     } finally {
@@ -403,10 +422,10 @@ function PlayPageInner({ source: sourceKeyRaw, id, epPath }: { source: string; i
               </button>
             </div>
             {sourceSearching ? (
-              <p className="mt-3 text-xs text-t3">正在搜索同名资源…</p>
+              <p className="mt-3 text-xs text-t3">正在检查各源可用性…</p>
             ) : (sourceCandidates ?? []).length <= 1 ? (
               <p className="mt-3 text-xs text-t3">
-                {(sourceCandidates ?? []).length === 1 ? '当前已是唯一可用的源' : '没有搜到其他源，稍后可重试'}
+                {(sourceCandidates ?? []).length === 1 ? '当前已是唯一可用的源' : '暂无其他可用源，稍后可重试'}
               </p>
             ) : (
               <div className="mt-3 flex flex-wrap gap-2">
