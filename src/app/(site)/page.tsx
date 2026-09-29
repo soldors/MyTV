@@ -88,6 +88,12 @@ function DoubanHeroSlide({ item, active }: { item: DoubanItem; active: boolean }
               <IconPlay className="h-4 w-4" />
               立即观看
             </Link>
+            <Link
+              href="/my"
+              className="flex items-center rounded-full border border-white/25 bg-white/5 px-5 py-2.5 text-sm text-t1 backdrop-blur transition hover:bg-white/10 md:px-7"
+            >
+              我的片单
+            </Link>
           </div>
         </div>
       </div>
@@ -136,6 +142,12 @@ function HeroSlide({ record, active }: { record: PlayRecord; active: boolean }) 
           >
             <IconPlay className="h-4 w-4" />
             {progress > 0.02 ? '继续播放' : '立即播放'}
+          </Link>
+          <Link
+            href="/my"
+            className="flex items-center rounded-full border border-white/25 bg-white/5 px-5 py-2.5 text-sm text-t1 backdrop-blur transition hover:bg-white/10 md:px-7"
+          >
+            我的片单
           </Link>
         </div>
       </div>

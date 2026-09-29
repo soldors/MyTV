@@ -13,6 +13,7 @@ import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   addFavorite,
   getDetail,
+  getDoubanRecommend,
   getSkipConfig,
   getSources,
   listFavorites,
@@ -22,8 +23,9 @@ import {
   saveSkipConfig,
 } from '@/lib/client-api';
 import type { PlayerApi } from '@/components/player/art-player';
-import type { PlayRecord, SkipConfig, VideoDetail } from '@/lib/types';
+import type { DoubanItem, PlayRecord, SkipConfig, VideoDetail } from '@/lib/types';
 import { useRequireUser } from '@/hooks/use-require-user';
+import PosterCard from '@/components/site/poster-card';
 import { EmptyState } from '@/components/site/empty-state';
 import { IconHeart, IconSearch } from '@/components/site/icons';
 import { cn } from '@/lib/utils';
@@ -39,6 +41,26 @@ interface PlayPageProps {
 
 const EMPTY_SKIP: SkipConfig = { introStart: 0, introEnd: 0, outroStart: 0, outroEnd: 0 };
 const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+
+/** 采集站分类名 → 豆瓣推荐 tag（地区/剧类优先于题材；均未命中回落「热门」） */
+const GENRE_TAG_MAP: [RegExp, string][] = [
+  [/国产剧|国产/, '国产'], [/欧美|美剧/, '欧美'], [/日剧|日漫/, '日剧'], [/韩剧/, '韩剧'], [/港台|港剧|台剧/, '港台'],
+  [/剧情/, '剧情'], [/喜剧/, '喜剧'], [/动作/, '动作'], [/爱情/, '爱情'],
+  [/科幻/, '科幻'], [/悬疑/, '悬疑'], [/恐怖|惊悚/, '恐怖'], [/犯罪/, '犯罪'],
+  [/动画|动漫/, '动画'], [/战争/, '战争'], [/奇幻/, '奇幻'], [/冒险/, '冒险'],
+  [/古装|武侠/, '古装'], [/家庭|伦理/, '家庭'], [/纪录/, '纪录片'], [/音乐|歌舞/, '音乐'],
+];
+
+function genreTagOf(typeName?: string): string {
+  if (!typeName) return '';
+  for (const [re, tag] of GENRE_TAG_MAP) if (re.test(typeName)) return tag;
+  return '热门';
+}
+
+/** 剧集判定：分类含剧/电视视为 tv，否则按电影推荐 */
+function isTvType(typeName?: string): boolean {
+  return /剧|电视/.test(typeName ?? '');
+}
 
 function PlayPageInner({ source: sourceKeyRaw, id, epPath }: { source: string; id: string; epPath?: string[] }) {
   const sourceKey = decodeURIComponent(sourceKeyRaw);
@@ -56,6 +78,7 @@ function PlayPageInner({ source: sourceKeyRaw, id, epPath }: { source: string; i
   const [lineIndex, setLineIndex] = useState(0);
   const [descExpanded, setDescExpanded] = useState(false);
   const [markPanelOpen, setMarkPanelOpen] = useState(false);
+  const [related, setRelated] = useState<DoubanItem[]>([]);
   const playerApiRef = useRef<PlayerApi | null>(null);
 
   // 解析源配置 + 详情 + 既有进度/收藏/跳过配置
@@ -181,6 +204,40 @@ function PlayPageInner({ source: sourceKeyRaw, id, epPath }: { source: string; i
       /* 忽略 */
     }
   }
+
+  // 相关推荐：按分类映射豆瓣同类热门（设计稿手机播放页「相关推荐横滑」）。
+  // 豆瓣 search_subjects 的题材 tag 仅对 movie 生效（tv 只认「热门」等聚合 tag），
+  // 空结果时回落同类型热门，保证区块稳定出现。
+  useEffect(() => {
+    setRelated([]);
+    const tag = genreTagOf(info?.typeName);
+    const currentTitle = (info?.title ?? '').replace(/\s+/g, '');
+    if (!tag || !currentTitle) return;
+    let alive = true;
+    const type = isTvType(info?.typeName) ? 'tv' : 'movie';
+    (async () => {
+      let items: DoubanItem[] = [];
+      try {
+        items = (await getDoubanRecommend(type, tag, 24)).items;
+      } catch {
+        /* 直连+降级都失败时下面再试一次热门 */
+      }
+      if (items.length === 0 && tag !== '热门') {
+        try {
+          items = (await getDoubanRecommend(type, '热门', 24)).items;
+        } catch {
+          return;
+        }
+      }
+      if (!alive) return;
+      setRelated(
+        items.filter((item) => item.title.replace(/\s+/g, '') !== currentTitle).slice(0, 12)
+      );
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [info?.typeName, info?.title]);
 
   // 恢复进度仅对「续看的那一集」生效，切集从头播放
   const initialTime = record && record.episodeIndex === episodeIndex ? record.playTime : 0;
@@ -467,6 +524,25 @@ function PlayPageInner({ source: sourceKeyRaw, id, epPath }: { source: string; i
           {isFavorite ? '已收藏' : '加入收藏'}
         </button>
       </div>
+
+      {/* 相关推荐（同类豆瓣热门，点击按片名搜索） */}
+      {related.length > 0 && (
+        <section className="lg:col-span-3">
+          <h3 className="mb-4 text-base font-semibold text-t1 md:text-lg">相关推荐</h3>
+          <div className="no-scrollbar -mx-4 flex gap-3 overflow-x-auto px-4 pb-1 md:-mx-6 md:gap-4 md:px-6">
+            {related.map((item) => (
+              <PosterCard
+                key={`${item.id}-${item.title}`}
+                title={item.title}
+                pic={item.cover ? `/api/proxy/${encodeURIComponent(item.cover)}` : undefined}
+                rating={item.rating}
+                href={`/search?wd=${encodeURIComponent(item.title)}`}
+                className="w-[120px] shrink-0 md:w-[160px]"
+              />
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }

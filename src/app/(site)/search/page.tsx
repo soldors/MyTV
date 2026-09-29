@@ -1,7 +1,9 @@
 'use client';
 
-// 搜索页（M2）：流式聚合搜索（NDJSON 逐源推送，健康源结果先出）+
-// 源多选 chips + 搜索历史（D1）+ 热门关键词；?wd= 直达（首页/导航/换源入口）。
+// 搜索页（M2，筛选栏补全 2026-09-29）：
+// 流式聚合搜索（NDJSON 逐源推送，健康源结果先出）+ 源多选 chips +
+// 搜索历史（D1）+ 热门关键词 + 结果筛选（类型/地区/年份，设计稿 §6.1：
+// 桌面左侧栏、手机折叠面板；选项由当前结果动态聚合）。
 
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -29,6 +31,24 @@ interface SourceUiState {
   progress?: StreamProgress;
 }
 
+/** 从结果聚合某维度的选项（值 → 数量），按数量降序取前 N */
+function buildFacets(
+  results: SearchResultItem[],
+  key: 'typeName' | 'area' | 'year',
+  limit = 8
+): { value: string; count: number }[] {
+  const counter = new Map<string, number>();
+  for (const item of results) {
+    const v = item[key];
+    if (!v) continue;
+    counter.set(v, (counter.get(v) ?? 0) + 1);
+  }
+  return [...counter.entries()]
+    .map(([value, count]) => ({ value, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, limit);
+}
+
 function SearchPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -42,6 +62,12 @@ function SearchPageInner() {
   const [history, setHistory] = useState<SearchHistoryItem[]>([]);
   const abortRef = useRef<AbortController | null>(null);
   const autoSearched = useRef(false);
+
+  // 结果筛选（类型/地区/年份）
+  const [filterType, setFilterType] = useState<string | null>(null);
+  const [filterArea, setFilterArea] = useState<string | null>(null);
+  const [filterYear, setFilterYear] = useState<string | null>(null);
+  const [mobileFilterOpen, setMobileFilterOpen] = useState(false);
 
   const selectedSources = useMemo(
     () => (sourcesUi ?? []).filter((s) => s.selected).map((s) => s.config),
@@ -75,6 +101,9 @@ function SearchPageInner() {
       setSearching(true);
       setSearchError('');
       setResults(null);
+      setFilterType(null);
+      setFilterArea(null);
+      setFilterYear(null);
       setSourcesUi((prev) =>
         (prev ?? []).map((s) => ({
           ...s,
@@ -155,6 +184,73 @@ function SearchPageInner() {
 
   const searched = results !== null;
 
+  // 筛选后的结果
+  const filteredResults = useMemo(() => {
+    if (!results) return [];
+    return results.filter(
+      (item) =>
+        (filterType === null || item.typeName === filterType) &&
+        (filterArea === null || item.area === filterArea) &&
+        (filterYear === null || item.year === filterYear)
+    );
+  }, [results, filterType, filterArea, filterYear]);
+
+  const typeFacets = useMemo(() => (searched ? buildFacets(results!, 'typeName') : []), [results, searched]);
+  const areaFacets = useMemo(() => (searched ? buildFacets(results!, 'area') : []), [results, searched]);
+  const yearFacets = useMemo(() => (searched ? buildFacets(results!, 'year', 10) : []), [results, searched]);
+  const activeFilterCount = [filterType, filterArea, filterYear].filter(Boolean).length;
+  const hasAnyFacet = typeFacets.length + areaFacets.length + yearFacets.length > 0;
+
+  function clearFilters() {
+    setFilterType(null);
+    setFilterArea(null);
+    setFilterYear(null);
+  }
+
+  /** 筛选组：桌面侧栏竖排 / 手机面板内横排 pills */
+  function renderFilterGroup(
+    label: string,
+    options: { value: string; count: number }[],
+    selected: string | null,
+    onSelect: (v: string | null) => void,
+    orientation: 'col' | 'row'
+  ) {
+    if (options.length === 0) return null;
+    return (
+      <div>
+        <p className={cn('text-xs font-medium text-t2', orientation === 'col' ? 'mb-2' : 'mb-1.5')}>{label}</p>
+        <div className={cn(orientation === 'col' ? 'space-y-1' : 'flex flex-wrap gap-1.5')}>
+          <button
+            onClick={() => onSelect(null)}
+            className={cn(
+              'rounded-full px-2.5 py-1 text-xs transition',
+              selected === null ? 'bg-overlay font-medium text-t1' : 'text-t3 hover:text-t2'
+            )}
+          >
+            全部
+          </button>
+          {options.map(({ value, count }) => (
+            <button
+              key={value}
+              onClick={() => onSelect(selected === value ? null : value)}
+              className={cn(
+                'flex items-center gap-1 rounded-full px-2.5 py-1 text-xs transition',
+                selected === value
+                  ? 'bg-accent font-medium text-white'
+                  : 'text-t2 hover:bg-overlay hover:text-t1'
+              )}
+            >
+              {value}
+              <span className={cn('text-[10px]', selected === value ? 'text-white/70' : 'text-t3')}>
+                {count}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="py-6">
       {/* 搜索框 */}
@@ -224,9 +320,7 @@ function SearchPageInner() {
         })}
         {sourcesUi === null && <span className="text-xs text-t3">源加载中…</span>}
         {sourcesUi?.length === 0 && (
-          <span className="text-xs text-t3">
-            未配置数据源（DEFAULT_SOURCES），请联系站长
-          </span>
+          <span className="text-xs text-t3">未配置数据源（DEFAULT_SOURCES），请联系站长</span>
         )}
       </div>
 
@@ -285,28 +379,84 @@ function SearchPageInner() {
         </div>
       )}
 
-      {/* 结果 */}
+      {/* 结果 + 筛选 */}
       {searched && (
-        <div className="mt-6">
-          {searchError && <p className="mb-4 text-sm text-accent">{searchError}</p>}
-          {results.length === 0 && !searchError ? (
-            <EmptyState
-              title={searching ? '等待各源返回…' : '没有找到相关结果'}
-              hint={searching ? undefined : '换个关键词，或检查上方数据源开关'}
-            />
-          ) : (
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 md:gap-4 lg:grid-cols-5 xl:grid-cols-6">
-              {results.map((item) => (
-                <PosterCard
-                  key={`${item.sourceKey}-${item.vodId}`}
-                  title={item.name}
-                  pic={item.pic}
-                  remarks={[item.remarks, item.year].filter(Boolean).join(' · ') || undefined}
-                  href={`/play/${encodeURIComponent(item.sourceKey)}/${encodeURIComponent(item.vodId)}`}
-                />
-              ))}
-            </div>
+        <div className="mt-6 lg:grid lg:grid-cols-[176px_1fr] lg:gap-6">
+          {/* 桌面左侧筛选栏 */}
+          {hasAnyFacet && (
+            <aside className="hidden lg:block">
+              <div className="sticky top-20 space-y-5 rounded-card border border-overlay/60 bg-elevated p-4">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-semibold text-t1">筛选</p>
+                  {activeFilterCount > 0 && (
+                    <button onClick={clearFilters} className="text-[11px] text-t3 transition hover:text-accent">
+                      清除
+                    </button>
+                  )}
+                </div>
+                {renderFilterGroup('类型', typeFacets, filterType, setFilterType, 'col')}
+                {renderFilterGroup('地区', areaFacets, filterArea, setFilterArea, 'col')}
+                {renderFilterGroup('年份', yearFacets, filterYear, setFilterYear, 'col')}
+              </div>
+            </aside>
           )}
+
+          <div className="min-w-0">
+            {/* 手机筛选折叠面板 */}
+            {hasAnyFacet && (
+              <div className="mb-4 lg:hidden">
+                <button
+                  onClick={() => setMobileFilterOpen((v) => !v)}
+                  className={cn(
+                    'rounded-full border px-4 py-1.5 text-xs transition',
+                    activeFilterCount > 0 || mobileFilterOpen
+                      ? 'border-accent text-accent'
+                      : 'border-overlay text-t2'
+                  )}
+                >
+                  筛选{activeFilterCount > 0 ? ` · ${activeFilterCount}` : ''} ▾
+                </button>
+                {mobileFilterOpen && (
+                  <div className="mt-3 space-y-4 rounded-card border border-overlay/60 bg-elevated p-4">
+                    {activeFilterCount > 0 && (
+                      <button onClick={clearFilters} className="text-[11px] text-t3 transition hover:text-accent">
+                        清除全部筛选
+                      </button>
+                    )}
+                    {renderFilterGroup('类型', typeFacets, filterType, setFilterType, 'row')}
+                    {renderFilterGroup('地区', areaFacets, filterArea, setFilterArea, 'row')}
+                    {renderFilterGroup('年份', yearFacets, filterYear, setFilterYear, 'row')}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {searchError && <p className="mb-4 text-sm text-accent">{searchError}</p>}
+            {filteredResults.length === 0 && !searchError ? (
+              <EmptyState
+                title={searching ? '等待各源返回…' : '没有匹配的结果'}
+                hint={
+                  searching
+                    ? undefined
+                    : activeFilterCount > 0
+                      ? '当前筛选条件下无结果，试试放宽筛选或清除'
+                      : '换个关键词，或检查上方数据源开关'
+                }
+              />
+            ) : (
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 md:gap-4 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
+                {filteredResults.map((item) => (
+                  <PosterCard
+                    key={`${item.sourceKey}-${item.vodId}`}
+                    title={item.name}
+                    pic={item.pic}
+                    remarks={[item.remarks, item.year].filter(Boolean).join(' · ') || undefined}
+                    href={`/play/${encodeURIComponent(item.sourceKey)}/${encodeURIComponent(item.vodId)}`}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
