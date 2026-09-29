@@ -11,6 +11,8 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import {
   addSearchHistory,
   clearSearchHistory,
+  getDoubanRecommend,
+  getHotList,
   getSources,
   listSearchHistory,
   searchStream,
@@ -24,6 +26,40 @@ import { IconSearch, IconTrash } from '@/components/site/icons';
 import { cn } from '@/lib/utils';
 
 const HOT_KEYWORDS = ['庆余年', '流浪地球', '狂飙', '繁花', '三体', '漫长的季节', '琅琊榜', '让子弹飞'];
+
+/**
+ * 实时热门词：60s 百度热播剧榜（自部署实例，1h 缓存）→ 豆瓣热门电影/剧集交错 → 静态兜底。
+ * 数据源失败静默降级，界面永不空白。
+ */
+async function loadHotKeywords(): Promise<string[]> {
+  try {
+    const baidu = (await getHotList('baidu_teleplay')).items.map((i) => i.title).filter(Boolean).slice(0, 8);
+    if (baidu.length >= 4) return baidu;
+  } catch {
+    /* 走豆瓣回退 */
+  }
+  try {
+    const [tv, movie] = await Promise.all([
+      getDoubanRecommend('tv', '热门', 12),
+      getDoubanRecommend('movie', '热门', 12),
+    ]);
+    const interleaved: string[] = [];
+    const seen = new Set<string>();
+    for (let i = 0; i < 12 && interleaved.length < 8; i++) {
+      for (const list of [tv.items, movie.items]) {
+        const t = list[i]?.title;
+        if (t && !seen.has(t)) {
+          seen.add(t);
+          interleaved.push(t);
+        }
+      }
+    }
+    if (interleaved.length >= 4) return interleaved;
+  } catch {
+    /* 走静态兜底 */
+  }
+  return HOT_KEYWORDS;
+}
 
 interface SourceUiState {
   config: SourceConfig;
@@ -60,6 +96,8 @@ function SearchPageInner() {
   const [results, setResults] = useState<SearchResultItem[] | null>(null);
   const [searchError, setSearchError] = useState('');
   const [history, setHistory] = useState<SearchHistoryItem[]>([]);
+  /** 热门词：先渲染静态兜底，实时热榜到达后替换 */
+  const [hotKeywords, setHotKeywords] = useState<string[]>(HOT_KEYWORDS);
   const abortRef = useRef<AbortController | null>(null);
   const autoSearched = useRef(false);
 
@@ -85,6 +123,7 @@ function SearchPageInner() {
     void listSearchHistory()
       .then(({ list }) => alive && setHistory(list))
       .catch(() => {});
+    void loadHotKeywords().then((words) => alive && setHotKeywords(words));
     return () => {
       alive = false;
     };
@@ -357,7 +396,7 @@ function SearchPageInner() {
           <section>
             <h3 className="mb-3 text-sm font-semibold text-t1">热门搜索</h3>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
-              {HOT_KEYWORDS.map((k, i) => (
+              {hotKeywords.map((k, i) => (
                 <Link
                   key={k}
                   href={`/search?wd=${encodeURIComponent(k)}`}

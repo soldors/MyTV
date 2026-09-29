@@ -160,7 +160,7 @@ function HeroSlide({ record, active }: { record: PlayRecord; active: boolean }) 
   );
 }
 
-function BrandHero() {
+function BrandHero({ keywords }: { keywords: string[] }) {
   const router = useRouter();
   const [wd, setWd] = useState('');
   return (
@@ -190,7 +190,7 @@ function BrandHero() {
         />
       </form>
       <div className="flex max-w-xl flex-wrap justify-center gap-2">
-        {HOT_KEYWORDS.map((k) => (
+        {keywords.map((k) => (
           <Link
             key={k}
             href={`/search?wd=${encodeURIComponent(k)}`}
@@ -340,7 +340,12 @@ function HomeContent({ user }: { user: SessionUser }) {
       ) : personalLoading || doubanRows['hot-movie'] === undefined ? (
         <HeroSkeleton />
       ) : (
-        <BrandHero />
+        <BrandHero
+          keywords={[
+            ...(doubanRows['hot-tv'] ?? []).slice(0, 3).map((i) => i.title),
+            ...(doubanRows['hot-movie'] ?? []).slice(0, 3).map((i) => i.title),
+          ].filter((t, i, arr) => t && arr.indexOf(t) === i)}
+        />
       )}
 
       {/* 继续观看（个人） */}
