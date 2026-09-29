@@ -12,6 +12,9 @@ import {
   type DailyCount,
   type FavoriteItem,
   type IStorage,
+  type LiveSourceInput,
+  type LiveSourcePatch,
+  type LiveSourceRecord,
   type PlayRecord,
   type SearchHistoryItem,
   type SiteConfig,
@@ -83,6 +86,24 @@ interface SubscriptionRow {
   name: string | null;
   last_synced_at: number | null;
   imported_count: number | null;
+}
+
+interface LiveSourceRow {
+  key: string;
+  name: string;
+  url: string;
+  epg: string | null;
+  enabled: number;
+}
+
+function mapLiveSource(row: LiveSourceRow): LiveSourceRecord {
+  return {
+    key: row.key,
+    name: row.name,
+    url: row.url,
+    epg: row.epg ?? undefined,
+    enabled: row.enabled === 1,
+  };
 }
 
 function mapApiSource(row: ApiSourceRow): ApiSourceRecord {
@@ -505,6 +526,66 @@ export class D1Storage implements IStorage {
 
   async deleteSubscription(id: number): Promise<boolean> {
     const res = await this.db.prepare('DELETE FROM subscriptions WHERE id = ?1').bind(id).run();
+    return (res.meta.changes ?? 0) > 0;
+  }
+
+  // —— 直播源维护（后台，对齐数据源管理） ——
+
+  async listLiveSources(): Promise<LiveSourceRecord[]> {
+    const res = await this.db
+      .prepare('SELECT key, name, url, epg, enabled FROM live_sources ORDER BY created_at DESC, key')
+      .all<LiveSourceRow>();
+    return (res.results ?? []).map(mapLiveSource);
+  }
+
+  async createLiveSource(input: LiveSourceInput): Promise<LiveSourceRecord> {
+    const record: LiveSourceRecord = {
+      // 前缀区分于点播 db_ / envlive_，避免 key 空间撞车
+      key: generateSourceKey().replace('db_', 'dbl_'),
+      name: input.name,
+      url: input.url,
+      epg: input.epg,
+      enabled: true,
+    };
+    await this.db
+      .prepare('INSERT INTO live_sources (key, name, url, epg, enabled, created_at) VALUES (?1, ?2, ?3, ?4, 1, ?5)')
+      .bind(record.key, record.name, record.url, record.epg ?? null, Date.now())
+      .run();
+    return record;
+  }
+
+  async updateLiveSource(key: string, patch: LiveSourcePatch): Promise<LiveSourceRecord | null> {
+    const sets: string[] = [];
+    const values: unknown[] = [];
+    if (patch.name !== undefined) {
+      sets.push('name = ?');
+      values.push(patch.name);
+    }
+    if (patch.url !== undefined) {
+      sets.push('url = ?');
+      values.push(patch.url);
+    }
+    if (patch.epg !== undefined) {
+      sets.push('epg = ?');
+      values.push(patch.epg || null);
+    }
+    if (patch.enabled !== undefined) {
+      sets.push('enabled = ?');
+      values.push(patch.enabled ? 1 : 0);
+    }
+    if (sets.length === 0) {
+      return (await this.listLiveSources()).find((s) => s.key === key) ?? null;
+    }
+    await this.db.prepare(`UPDATE live_sources SET ${sets.join(', ')} WHERE key = ?`).bind(...values, key).run();
+    const row = await this.db
+      .prepare('SELECT key, name, url, epg, enabled FROM live_sources WHERE key = ?1')
+      .bind(key)
+      .first<LiveSourceRow>();
+    return row ? mapLiveSource(row) : null;
+  }
+
+  async deleteLiveSource(key: string): Promise<boolean> {
+    const res = await this.db.prepare('DELETE FROM live_sources WHERE key = ?1').bind(key).run();
     return (res.meta.changes ?? 0) > 0;
   }
 

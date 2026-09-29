@@ -53,6 +53,49 @@ export function probeSource(url: string): Promise<{ ok: boolean; ms: number; cou
   return fetchJson('/api/source/test', jsonInit('POST', { url }));
 }
 
+// —— 直播源 ——
+
+export interface AdminLiveSource {
+  key?: string;
+  name: string;
+  url: string;
+  epg?: string;
+  enabled?: boolean;
+  probeOk?: boolean;
+  probeMs?: number;
+  probeChannels?: number;
+  probedAt?: number;
+}
+
+export function listAdminLiveSources(): Promise<{
+  dbSources: AdminLiveSource[];
+  envSources: AdminLiveSource[];
+  hiddenEnvSources: { name: string; url: string }[];
+}> {
+  return fetchJson('/api/admin/live-sources');
+}
+
+export function createLiveSource(input: { name: string; url: string; epg?: string }): Promise<{ source: AdminLiveSource }> {
+  return fetchJson('/api/admin/live-sources', jsonInit('POST', input));
+}
+
+export function updateLiveSource(key: string, patch: Record<string, unknown>): Promise<{ source: AdminLiveSource }> {
+  return fetchJson('/api/admin/live-sources', jsonInit('PATCH', { key, ...patch }));
+}
+
+export function deleteLiveSource(key: string): Promise<void> {
+  return fetchJson(`/api/admin/live-sources?key=${encodeURIComponent(key)}`, { method: 'DELETE' }).then(() => undefined);
+}
+
+export function probeLiveSource(url: string): Promise<{ ok: boolean; ms: number; channels?: number; error?: string }> {
+  return fetchJson('/api/admin/live-sources', jsonInit('POST', { action: 'probe', url }));
+}
+
+/** 恢复被删除的环境变量预置直播源 */
+export function restoreEnvLiveSource(url: string): Promise<void> {
+  return fetchJson('/api/admin/live-sources', jsonInit('POST', { action: 'restoreEnv', url })).then(() => undefined);
+}
+
 // —— 订阅 ——
 
 export function listSubscriptions(): Promise<{ subscriptions: SubscriptionRecord[] }> {

@@ -22,6 +22,7 @@ import {
   IconGrid,
   IconInfo,
   IconMenu,
+  IconPlay,
   IconSettings,
   IconTv,
   IconUser,
@@ -31,6 +32,7 @@ import packageInfo from '../../../../../package.json';
 const ADMIN_NAV = [
   { href: '/admin/dashboard', label: '仪表盘', icon: IconGrid },
   { href: '/admin/sources', label: '数据源管理', icon: IconFilm },
+  { href: '/admin/live-sources', label: '直播源管理', icon: IconPlay },
   { href: '/admin/subscriptions', label: 'TVBox 订阅', icon: IconTv },
   { href: '/admin/users', label: '用户管理', icon: IconUser },
   { href: '/admin/settings', label: '站点设置', icon: IconSettings },

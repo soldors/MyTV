@@ -169,6 +169,8 @@ export interface SiteConfig {
   searchMaxPages?: number;
   /** 已删除（屏蔽）的环境变量预置源 URL（DEFAULT_SOURCES 只读，删除以覆盖层实现） */
   hiddenEnvSources?: string[];
+  /** 已删除（屏蔽）的环境变量预置直播源 URL（DEFAULT_LIVE_SOURCES） */
+  hiddenEnvLiveSources?: string[];
 }
 
 // —— 直播 / IPTV ——

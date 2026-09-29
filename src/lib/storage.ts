@@ -43,6 +43,23 @@ export interface ApiSourceRecord {
   enabled: boolean;
 }
 
+/** D1 live_sources 表的直播源记录（M3U 订阅，前台合并出口见 /api/sources） */
+export interface LiveSourceRecord {
+  key: string;
+  name: string;
+  url: string;
+  epg?: string;
+  enabled: boolean;
+}
+
+export interface LiveSourceInput {
+  name: string;
+  url: string;
+  epg?: string;
+}
+
+export type LiveSourcePatch = Partial<Pick<LiveSourceRecord, 'name' | 'url' | 'epg' | 'enabled'>>;
+
 /** 数据源订阅（TVBox / SourceList URL，导入动作由 admin API 驱动） */
 export interface SubscriptionRecord {
   id: number;
@@ -171,6 +188,12 @@ export interface IStorage {
   renameSubscription(id: number, name: string): Promise<SubscriptionRecord | null>;
   /** 记录一次成功同步时间与本次导入源数 */
   touchSubscription(id: number, importedCount?: number): Promise<void>;
+
+  // —— 直播源维护（后台，对齐数据源管理） ——
+  listLiveSources(): Promise<LiveSourceRecord[]>;
+  createLiveSource(input: LiveSourceInput): Promise<LiveSourceRecord>;
+  updateLiveSource(key: string, patch: LiveSourcePatch): Promise<LiveSourceRecord | null>;
+  deleteLiveSource(key: string): Promise<boolean>;
 
   // —— 后台指标（M6） ——
   /** 落一条源健康采样：同 url 同小时只留第一条（UNIQUE(url,hour) ON CONFLICT IGNORE） */
