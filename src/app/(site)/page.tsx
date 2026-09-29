@@ -287,15 +287,16 @@ function HomeContent({ user }: { user: SessionUser }) {
     };
   }, []);
 
-  // Hero：个人续看优先，否则豆瓣热门电影，再否则品牌搜索 Hero
+  // Hero：推荐内容优先（设计稿定位：Netflix 式推广位）；个人续看只在下方分区行，
+  // 仅当豆瓣热门完全不可用时才回落续看（避免首屏空白），再否则品牌搜索 Hero
   const heroSlides = useMemo(() => {
-    const recordSlides = (records ?? []).slice(0, 5).map((record) => ({ kind: 'record' as const, record }));
-    if (recordSlides.length > 0) return recordSlides;
     const doubanSlides = (doubanRows['hot-movie'] ?? [])
       .filter((item) => item.cover)
       .slice(0, 5)
       .map((item) => ({ kind: 'douban' as const, item }));
-    return doubanSlides;
+    if (doubanSlides.length > 0) return doubanSlides;
+    const recordSlides = (records ?? []).slice(0, 5).map((record) => ({ kind: 'record' as const, record }));
+    return recordSlides;
   }, [records, doubanRows]);
 
   // Hero 轮播 5s 自动切换（多张时）
