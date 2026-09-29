@@ -40,6 +40,26 @@ export async function requireSessionUser(
   return { session };
 }
 
+/**
+ * /api/admin/* 路由的自校验守卫（纵深防御；middleware 已按路径强制）：
+ * 非管理员与 middleware 同样返回 404，不暴露后台存在性。
+ */
+export async function requireAdmin(req: Request): Promise<{ session: VerifiedSession } | { error: NextResponse }> {
+  if (!isPasswordConfigured()) {
+    return {
+      error: NextResponse.json(
+        { error: '服务器未设置 PASSWORD 环境变量' },
+        { status: 503 }
+      ),
+    };
+  }
+  const session = await sessionFromCookieHeader(req.headers.get('cookie'));
+  if (!session || session.role !== 'admin') {
+    return { error: NextResponse.json({ error: 'Not Found' }, { status: 404 }) };
+  }
+  return { session };
+}
+
 export function jsonError(message: string, status: number): NextResponse {
   return NextResponse.json({ error: message }, { status });
 }

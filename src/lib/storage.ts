@@ -30,6 +30,37 @@ export interface UserCredentials {
   iterations: number;
 }
 
+// —— 后台管理（M4）——
+
+/** D1 api_sources 表的数据源记录（前台合并出口见 /api/sources） */
+export interface ApiSourceRecord {
+  key: string;
+  name: string;
+  apiUrl: string;
+  detailUrl?: string;
+  isAdult: boolean;
+  weight: number;
+  enabled: boolean;
+}
+
+/** 数据源订阅（TVBox / SourceList URL，导入动作由 admin API 驱动） */
+export interface SubscriptionRecord {
+  id: number;
+  url: string;
+  name?: string;
+  lastSyncedAt?: number;
+}
+
+export interface ApiSourceInput {
+  name: string;
+  apiUrl: string;
+  detailUrl?: string;
+  isAdult?: boolean;
+  weight?: number;
+}
+
+export type ApiSourcePatch = Partial<Pick<ApiSourceRecord, 'name' | 'apiUrl' | 'detailUrl' | 'isAdult' | 'weight' | 'enabled'>>;
+
 export const DEFAULT_SITE_CONFIG: SiteConfig = {
   registrationEnabled: true,
   registrationApproval: true,
@@ -53,6 +84,8 @@ export interface IStorage {
     options?: { role?: UserRole; status?: UserStatus }
   ): Promise<StoredUser>;
   updateUserStatus(name: string, status: UserStatus): Promise<boolean>;
+  /** 管理员重置用户密码 */
+  updateUserPassword(name: string, credentials: UserCredentials): Promise<boolean>;
   deleteUser(name: string): Promise<boolean>;
   listUsers(): Promise<StoredUser[]>;
 
@@ -80,4 +113,17 @@ export interface IStorage {
   // —— 站点配置 ——
   getSiteConfig(): Promise<SiteConfig>;
   saveSiteConfig(patch: Partial<SiteConfig>): Promise<SiteConfig>;
+
+  // —— 数据源管理（M4 后台） ——
+  listApiSources(): Promise<ApiSourceRecord[]>;
+  createApiSource(input: ApiSourceInput): Promise<ApiSourceRecord>;
+  updateApiSource(key: string, patch: ApiSourcePatch): Promise<ApiSourceRecord | null>;
+  deleteApiSource(key: string): Promise<boolean>;
+
+  // —— 数据源订阅（M4 后台） ——
+  listSubscriptions(): Promise<SubscriptionRecord[]>;
+  addSubscription(url: string, name?: string): Promise<SubscriptionRecord>;
+  deleteSubscription(id: number): Promise<boolean>;
+  /** 记录一次成功同步时间 */
+  touchSubscription(id: number): Promise<void>;
 }

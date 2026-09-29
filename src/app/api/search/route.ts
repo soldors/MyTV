@@ -5,11 +5,21 @@ import { guardRequest } from '@/lib/api-guard';
 import { cmsRequestHeaders, filterAdultResults, filterRelevantResults, normalizeTitle, parseSearchList } from '@/lib/cms-parser';
 import { fetchUpstream, getCache, setCache } from '@/lib/fetch-utils';
 import { checkBreaker, recordOutcome } from '@/lib/circuit-breaker';
+import { getStorage } from '@/lib/d1-storage';
 import { getKvCache, shouldCacheSearch } from '@/lib/kv-cache';
 import { checkUpstreamAllowed } from '@/lib/ssrf';
 import type { SearchResponse, SearchStreamEvent, SourceConfig, SourceSearchOutcome } from '@/lib/types';
 
 export const runtime = 'nodejs';
+
+/** 站点配置读取失败时回落默认（成人过滤默认开 #8） */
+async function getSiteConfigSafe(): Promise<{ adultFilterEnabled: boolean }> {
+  try {
+    return await (await getStorage()).getSiteConfig();
+  } catch {
+    return { adultFilterEnabled: true };
+  }
+}
 
 interface SearchBody {
   wd: string;
@@ -236,7 +246,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: '请至少选择一个点播源' }, { status: 400 });
   }
   const sources = body.sources.slice(0, 50);
-  const filterAdult = body.filterAdult !== false;
+  // 过滤默认值接站点配置（后台可关 #8）；请求显式指定时以请求为准
+  const filterAdult =
+    body.filterAdult !== undefined
+      ? body.filterAdult !== false
+      : (await getSiteConfigSafe()).adultFilterEnabled;
 
   const isStream = new URL(req.url).searchParams.get('stream') === '1';
   const cacheKey = searchCacheKey(wd, sources, filterAdult);

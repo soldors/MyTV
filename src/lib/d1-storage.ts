@@ -5,6 +5,9 @@ import { getCloudflareContext } from '@opennextjs/cloudflare';
 import {
   DEFAULT_SITE_CONFIG,
   SEARCH_HISTORY_LIMIT,
+  type ApiSourceInput,
+  type ApiSourcePatch,
+  type ApiSourceRecord,
   type FavoriteItem,
   type IStorage,
   type PlayRecord,
@@ -12,6 +15,7 @@ import {
   type SiteConfig,
   type SkipConfig,
   type StoredUser,
+  type SubscriptionRecord,
   type UserCredentials,
   type UserRole,
   type UserStatus,
@@ -56,6 +60,50 @@ interface SkipConfigRow {
   intro_end: number;
   outro_start: number;
   outro_end: number;
+}
+
+interface ApiSourceRow {
+  key: string;
+  name: string;
+  api_url: string;
+  detail_url: string | null;
+  is_adult: number;
+  weight: number;
+  enabled: number;
+}
+
+interface SubscriptionRow {
+  id: number;
+  url: string;
+  name: string | null;
+  last_synced_at: number | null;
+}
+
+function mapApiSource(row: ApiSourceRow): ApiSourceRecord {
+  return {
+    key: row.key,
+    name: row.name,
+    apiUrl: row.api_url,
+    detailUrl: row.detail_url ?? undefined,
+    isAdult: row.is_adult === 1,
+    weight: row.weight,
+    enabled: row.enabled === 1,
+  };
+}
+
+function mapSubscription(row: SubscriptionRow): SubscriptionRecord {
+  return {
+    id: row.id,
+    url: row.url,
+    name: row.name ?? undefined,
+    lastSyncedAt: row.last_synced_at ?? undefined,
+  };
+}
+
+/** 生成 DB 源的稳定 key（URL 安全，用作 /play/:source 路径段） */
+function generateSourceKey(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(4));
+  return 'db_' + [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 function mapUser(row: UserRow): StoredUser {
@@ -138,6 +186,14 @@ export class D1Storage implements IStorage {
     const res = await this.db
       .prepare('UPDATE users SET status = ?2 WHERE name = ?1')
       .bind(name, status)
+      .run();
+    return (res.meta.changes ?? 0) > 0;
+  }
+
+  async updateUserPassword(name: string, credentials: UserCredentials): Promise<boolean> {
+    const res = await this.db
+      .prepare('UPDATE users SET password_hash = ?2, salt = ?3, iterations = ?4 WHERE name = ?1')
+      .bind(name, credentials.passwordHash, credentials.salt, credentials.iterations)
       .run();
     return (res.meta.changes ?? 0) > 0;
   }
@@ -338,6 +394,91 @@ export class D1Storage implements IStorage {
       .bind(JSON.stringify(patch), Date.now())
       .run();
     return this.getSiteConfig();
+  }
+
+  // —— 数据源管理（M4 后台） ——
+
+  async listApiSources(): Promise<ApiSourceRecord[]> {
+    const res = await this.db
+      .prepare('SELECT key, name, api_url, detail_url, is_adult, weight, enabled FROM api_sources ORDER BY weight DESC, key')
+      .all<ApiSourceRow>();
+    return (res.results ?? []).map(mapApiSource);
+  }
+
+  async createApiSource(input: ApiSourceInput): Promise<ApiSourceRecord> {
+    const record: ApiSourceRecord = {
+      key: generateSourceKey(),
+      name: input.name,
+      apiUrl: input.apiUrl,
+      detailUrl: input.detailUrl,
+      isAdult: input.isAdult === true,
+      weight: input.weight ?? 0,
+      enabled: true,
+    };
+    await this.db
+      .prepare('INSERT INTO api_sources (key, name, api_url, detail_url, is_adult, weight, enabled) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)')
+      .bind(record.key, record.name, record.apiUrl, record.detailUrl ?? null, record.isAdult ? 1 : 0, record.weight, 1)
+      .run();
+    return record;
+  }
+
+  async updateApiSource(key: string, patch: ApiSourcePatch): Promise<ApiSourceRecord | null> {
+    const current = (await this.db
+      .prepare('SELECT key, name, api_url, detail_url, is_adult, weight, enabled FROM api_sources WHERE key = ?1')
+      .bind(key)
+      .first<ApiSourceRow>());
+    if (!current) return null;
+    const next = mapApiSource(current);
+    if (patch.name !== undefined) next.name = patch.name;
+    if (patch.apiUrl !== undefined) next.apiUrl = patch.apiUrl;
+    if (patch.detailUrl !== undefined) next.detailUrl = patch.detailUrl;
+    if (patch.isAdult !== undefined) next.isAdult = patch.isAdult;
+    if (patch.weight !== undefined) next.weight = patch.weight;
+    if (patch.enabled !== undefined) next.enabled = patch.enabled;
+    await this.db
+      .prepare('UPDATE api_sources SET name = ?2, api_url = ?3, detail_url = ?4, is_adult = ?5, weight = ?6, enabled = ?7 WHERE key = ?1')
+      .bind(key, next.name, next.apiUrl, next.detailUrl ?? null, next.isAdult ? 1 : 0, next.weight, next.enabled ? 1 : 0)
+      .run();
+    return next;
+  }
+
+  async deleteApiSource(key: string): Promise<boolean> {
+    const res = await this.db.prepare('DELETE FROM api_sources WHERE key = ?1').bind(key).run();
+    return (res.meta.changes ?? 0) > 0;
+  }
+
+  // —— 数据源订阅（M4 后台） ——
+
+  async listSubscriptions(): Promise<SubscriptionRecord[]> {
+    const res = await this.db
+      .prepare('SELECT id, url, name, last_synced_at FROM subscriptions ORDER BY id DESC')
+      .all<SubscriptionRow>();
+    return (res.results ?? []).map(mapSubscription);
+  }
+
+  async addSubscription(url: string, name?: string): Promise<SubscriptionRecord> {
+    const now = Date.now();
+    await this.db
+      .prepare('INSERT INTO subscriptions (url, name, last_synced_at) VALUES (?1, ?2, ?3) ON CONFLICT (url) DO UPDATE SET name = excluded.name')
+      .bind(url, name ?? null, now)
+      .run();
+    const row = await this.db
+      .prepare('SELECT id, url, name, last_synced_at FROM subscriptions WHERE url = ?1')
+      .bind(url)
+      .first<SubscriptionRow>();
+    return mapSubscription(row as SubscriptionRow);
+  }
+
+  async deleteSubscription(id: number): Promise<boolean> {
+    const res = await this.db.prepare('DELETE FROM subscriptions WHERE id = ?1').bind(id).run();
+    return (res.meta.changes ?? 0) > 0;
+  }
+
+  async touchSubscription(id: number): Promise<void> {
+    await this.db
+      .prepare('UPDATE subscriptions SET last_synced_at = ?2 WHERE id = ?1')
+      .bind(id, Date.now())
+      .run();
   }
 }
 
