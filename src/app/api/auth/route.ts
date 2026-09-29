@@ -15,6 +15,7 @@ import {
   sessionFromCookieHeader,
   signSession,
 } from '@/lib/auth';
+import { getStorage } from '@/lib/d1-storage';
 
 export const runtime = 'nodejs';
 
@@ -53,13 +54,23 @@ export async function POST(req: Request) {
   return res;
 }
 
-/** GET：查询当前会话状态（站长或普通用户） */
+/** GET：查询当前会话状态（站长或普通用户）+ 站点品牌信息（前台顶栏/公告条，L15） */
 export async function GET(req: Request) {
   const session = await sessionFromCookieHeader(req.headers.get('cookie'));
+
+  let site: { siteName?: string; announcement?: string } = {};
+  try {
+    const config = await (await getStorage()).getSiteConfig();
+    site = { siteName: config.siteName, announcement: config.announcement };
+  } catch {
+    // DB 不可用时不阻断会话查询，站点信息回落默认
+  }
+
   return NextResponse.json({
     success: true,
     verified: session !== null,
     user: session ? { name: session.name, role: session.role } : null,
+    site,
   });
 }
 

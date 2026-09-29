@@ -11,6 +11,8 @@ import type {
   SearchResponse,
   SearchStreamEvent,
   SearchResultItem,
+  SiteConfig,
+  SkipConfig,
   SourceConfig,
   VideoDetail,
 } from './types';
@@ -18,6 +20,12 @@ import type {
 export interface SessionUser {
   name: string;
   role: 'admin' | 'user';
+}
+
+/** 站点品牌信息（/api/auth GET 下发，前台顶栏与公告条使用） */
+export interface SiteInfo {
+  siteName?: string;
+  announcement?: string;
 }
 
 async function fetchJson<T>(input: string, init?: RequestInit): Promise<T> {
@@ -39,7 +47,7 @@ function postJson<T>(url: string, body: unknown, method = 'POST'): Promise<T> {
 
 // —— 会话 ——
 
-export function getAuthStatus(): Promise<{ verified: boolean; user: SessionUser | null }> {
+export function getAuthStatus(): Promise<{ verified: boolean; user: SessionUser | null; site?: SiteInfo }> {
   return fetchJson('/api/auth');
 }
 
@@ -162,6 +170,21 @@ export async function searchStream(options: {
 export function getDetail(source: SourceConfig, id: string): Promise<VideoDetail> {
   const params = new URLSearchParams({ id, source: JSON.stringify(source) });
   return fetchJson(`/api/detail?${params.toString()}`);
+}
+
+// —— 跳过片头片尾 ——
+
+export function getSkipConfig(source: string, vodId: string): Promise<{ config: SkipConfig | null }> {
+  const params = new URLSearchParams({ source, vodId });
+  return fetchJson(`/api/skip?${params.toString()}`);
+}
+
+export function saveSkipConfig(
+  source: string,
+  vodId: string,
+  config: SkipConfig
+): Promise<{ config: SkipConfig }> {
+  return postJson('/api/skip', { source, vodId, ...config });
 }
 
 // —— 播放记录 ——

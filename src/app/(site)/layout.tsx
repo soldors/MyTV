@@ -6,6 +6,7 @@
 import { usePathname } from 'next/navigation';
 import { SessionProvider } from '@/hooks/use-session';
 import SiteNav from '@/components/site/site-nav';
+import AnnouncementBar from '@/components/site/announcement-bar';
 import { cn } from '@/lib/utils';
 
 function SiteFooter() {
@@ -50,6 +51,7 @@ export default function SiteLayout({ children }: { children: React.ReactNode }) 
       <div className="flex min-h-screen flex-col">
         <SiteNav />
         <main className={cn('mx-auto w-full max-w-[1600px] flex-1 px-4 md:px-6', !isLogin && 'pt-14 md:pt-16')}>
+          {!isLogin && <AnnouncementBar />}
           {children}
         </main>
         <SiteFooter />

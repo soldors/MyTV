@@ -48,17 +48,43 @@ export function parseSearchList(
   });
 }
 
+/** 取分集条目的地址：标准 `集名$URL` 取 $ 后段；裸 URL 直接用（部分源无集名前缀） */
+function episodeUrlOf(entry: string): string {
+  const parts = entry.split('$');
+  const url = parts.length > 1 ? parts[1] : parts[0];
+  return url.startsWith('http://') || url.startsWith('https://') ? url : '';
+}
+
 /** 从 vod_play_url 中提取分集地址：格式 源1$$$源2，集1$URL1#集2$URL2 */
 export function extractEpisodesFromPlayUrl(playUrl: string): string[] {
   if (!playUrl) return [];
   const firstSource = playUrl.split('$$$')[0] ?? '';
   return firstSource
     .split('#')
-    .map((ep) => {
-      const parts = ep.split('$');
-      return parts.length > 1 ? parts[1] : '';
-    })
-    .filter((url) => url.startsWith('http://') || url.startsWith('https://'));
+    .map(episodeUrlOf)
+    .filter((url) => url !== '');
+}
+
+/**
+ * 解析全部播放线路（L8）：vod_play_url 按 $$$ 分段，vod_play_from 按同序给出线路名
+ * （常见为格式名如 qq/m3u8/youku，直接展示采集站原始标记；缺失/数量不齐时兜底「线路N」）。
+ * 每段内 # 分集、$ 分「集名$地址」；仅保留 http(s) 地址，空线路丢弃。
+ */
+export function extractPlayLines(playUrl: string, playFrom: string): { name: string; episodes: string[] }[] {
+  if (!playUrl) return [];
+  const urlSegments = playUrl.split('$$$');
+  const nameSegments = (playFrom || '').split('$$$');
+  const lines: { name: string; episodes: string[] }[] = [];
+  for (let i = 0; i < urlSegments.length; i++) {
+    const episodes = urlSegments[i]
+      .split('#')
+      .map(episodeUrlOf)
+      .filter((url) => url !== '');
+    if (episodes.length === 0) continue;
+    const rawName = (nameSegments[i] ?? '').trim();
+    lines.push({ name: rawName || `线路${i + 1}`, episodes });
+  }
+  return lines;
 }
 
 /** 从简介文本中兜底提取 m3u8 链接 */
@@ -78,12 +104,17 @@ export function parseDetail(
     throw new Error('获取到的详情内容无效');
   }
   const vod = d.list[0];
-  let episodes = extractEpisodesFromPlayUrl(String(vod.vod_play_url ?? ''));
+  const playUrl = String(vod.vod_play_url ?? '');
+  let lines = extractPlayLines(playUrl, String(vod.vod_play_from ?? ''));
+  let episodes = lines[0]?.episodes ?? [];
   if (episodes.length === 0) {
+    // 列表接口无播放地址 → 简介兜底提取（此时无线路概念）
     episodes = extractM3u8FromText(String(vod.vod_content ?? ''));
+    lines = episodes.length > 0 ? [{ name: '线路1', episodes }] : [];
   }
   return {
-    episodes,
+    episodes: lines[0]?.episodes ?? episodes,
+    lines,
     videoInfo: {
       title: str(vod.vod_name),
       cover: str(vod.vod_pic),
@@ -132,6 +163,7 @@ export function parseDetailPageHtml(
 
   return {
     episodes,
+    lines: episodes.length > 0 ? [{ name: '线路1', episodes }] : [],
     videoInfo: {
       title: titleMatch ? titleMatch[1].trim() : undefined,
       desc: descMatch ? descMatch[1].replace(/<[^>]+>/g, ' ').trim() : undefined,

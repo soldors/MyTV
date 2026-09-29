@@ -42,8 +42,19 @@ export interface VideoInfo {
   sourceUrl?: string;
 }
 
-export interface VideoDetail {
+/** 播放线路（vod_play_url 的 $$$ 分段；L8 多线路） */
+export interface PlayLine {
+  /** 线路名（vod_play_from 对应段，缺失时由解析器兜底「线路N」） */
+  name: string;
+  /** 该线路的分集地址 */
   episodes: string[];
+}
+
+export interface VideoDetail {
+  /** 兼容字段：当前默认线路（lines[0]）的分集；无 lines 时为唯一线路 */
+  episodes: string[];
+  /** 全部线路（单线路详情也会带一条，便于播放页统一渲染） */
+  lines: PlayLine[];
   videoInfo: VideoInfo;
 }
 

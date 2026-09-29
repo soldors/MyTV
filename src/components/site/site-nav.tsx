@@ -59,9 +59,10 @@ function TopSearchBox() {
 
 export default function SiteNav() {
   const pathname = usePathname();
-  const { user } = useSession();
+  const { user, site } = useSession();
   if (pathname === '/login') return null;
 
+  const brand = site.siteName?.trim() || 'MyTV';
   const isActive = (href: string) => (href === '/' ? pathname === '/' : pathname.startsWith(href));
 
   return (
@@ -70,7 +71,7 @@ export default function SiteNav() {
       <header className="fixed inset-x-0 top-0 z-40 border-b border-overlay/60 bg-bg/85 backdrop-blur-md">
         <div className="mx-auto flex h-14 max-w-[1600px] items-center gap-6 px-4 md:h-16 md:gap-8 md:px-6">
           <Link href="/" className="text-xl font-extrabold tracking-wide text-accent md:text-2xl">
-            MyTV
+            {brand}
           </Link>
           <nav className="hidden items-center gap-7 md:flex">
             {NAV_LINKS.map((l) => (
