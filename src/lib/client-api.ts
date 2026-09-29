@@ -193,9 +193,15 @@ export function saveSkipConfig(
 export function getDoubanRecommend(
   type: 'movie' | 'tv',
   tag: string,
-  pageSize = 24
+  pageSize = 24,
+  pageStart = 0
 ): Promise<{ items: DoubanItem[] }> {
-  const params = new URLSearchParams({ type, tag, pageSize: String(pageSize) });
+  const params = new URLSearchParams({
+    type,
+    tag,
+    pageSize: String(pageSize),
+    pageStart: String(pageStart),
+  });
   return fetchJson(`/api/douban?${params.toString()}`);
 }
 
