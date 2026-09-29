@@ -49,6 +49,48 @@ export interface SubscriptionRecord {
   url: string;
   name?: string;
   lastSyncedAt?: number;
+  /** 最近一次导入新增的源数量（M6；未统计过的历史行为 undefined） */
+  importedCount?: number;
+}
+
+// —— 后台指标（M6，见 migrations/0003_admin_metrics.sql）——
+
+/** 源健康窗口聚合：按 url 统计采样数与成功数，可用率 = okCount / samples */
+export interface SourceHealthSummary {
+  url: string;
+  samples: number;
+  okCount: number;
+  avgMs: number;
+}
+
+/** source_catalog 行：某源最近一次探活快照与收录总量 */
+export interface SourceCatalogEntry {
+  url: string;
+  ok?: boolean;
+  ms?: number;
+  /** CMS 响应 total（该源收录影片数）；未探活或源不返回 total 时为 undefined */
+  total?: number;
+  probedAt?: number;
+}
+
+/** 按本地日聚合的计数点；day 为「距 epoch 的整天数」（已折入时区偏移） */
+export interface DailyCount {
+  day: number;
+  count: number;
+}
+
+/** 后台用户表行：id 取 SQLite rowid（users 主键是 name，无自增列） */
+export interface AdminUserRow extends StoredUser {
+  id: number;
+  registerIp?: string;
+}
+
+/** 用户状态计数（仪表盘待审批角标与统计卡） */
+export interface UserStatusCounts {
+  total: number;
+  pending: number;
+  active: number;
+  disabled: number;
 }
 
 export interface ApiSourceInput {
@@ -81,7 +123,7 @@ export interface IStorage {
   createUser(
     name: string,
     credentials: UserCredentials,
-    options?: { role?: UserRole; status?: UserStatus }
+    options?: { role?: UserRole; status?: UserStatus; registerIp?: string }
   ): Promise<StoredUser>;
   updateUserStatus(name: string, status: UserStatus): Promise<boolean>;
   /** 管理员重置用户密码 */
