@@ -1,9 +1,8 @@
 'use client';
 
-// 搜索页（M2，筛选栏补全 2026-09-29）：
-// 流式聚合搜索（NDJSON 逐源推送，健康源结果先出）+ 源多选 chips +
-// 搜索历史（D1）+ 热门关键词 + 结果筛选（类型/地区/年份，设计稿 §6.1：
-// 桌面左侧栏、手机折叠面板；选项由当前结果动态聚合）。
+// 搜索页（M2，筛选栏补全 2026-09-29）：流式聚合搜索（NDJSON 逐源推送，
+// 健康源结果先出）默认查询全部启用源（源的选择性管理在后台完成）+
+// 搜索历史（D1）+ 热门关键词 + 同名影片去重展示 + 结果筛选（类型/地区/年份）。
 
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -16,7 +15,6 @@ import {
   getSources,
   listSearchHistory,
   searchStream,
-  type StreamProgress,
 } from '@/lib/client-api';
 import type { SearchHistoryItem, SearchResultItem, SourceConfig } from '@/lib/types';
 import { useRequireUser } from '@/hooks/use-require-user';
@@ -62,13 +60,7 @@ async function loadHotKeywords(): Promise<string[]> {
   return HOT_KEYWORDS;
 }
 
-interface SourceUiState {
-  config: SourceConfig;
-  selected: boolean;
-  progress?: StreamProgress;
-}
-
-/** 从结果聚合某维度的选项（值 → 数量），按数量降序取前 N */
+/** 从结果聚合某维度的选项（值 → 数量），按数量降序取前 N *//** 从结果聚合某维度的选项（值 → 数量），按数量降序取前 N */
 function buildFacets(
   results: SearchResultItem[],
   key: 'typeName' | 'area' | 'year',
@@ -92,7 +84,8 @@ function SearchPageInner() {
   const initialWd = searchParams.get('wd') || '';
 
   const [wd, setWd] = useState(initialWd);
-  const [sourcesUi, setSourcesUi] = useState<SourceUiState[] | null>(null);
+  /** 全部启用源（后台管理启停），搜索时全量查询 */
+  const [allSources, setAllSources] = useState<SourceConfig[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [results, setResults] = useState<SearchResultItem[] | null>(null);
   const [searchError, setSearchError] = useState('');
@@ -108,19 +101,11 @@ function SearchPageInner() {
   const [filterYear, setFilterYear] = useState<string | null>(null);
   const [mobileFilterOpen, setMobileFilterOpen] = useState(false);
 
-  const selectedSources = useMemo(
-    () => (sourcesUi ?? []).filter((s) => s.selected).map((s) => s.config),
-    [sourcesUi]
-  );
-
   useEffect(() => {
     let alive = true;
     void getSources()
-      .then(({ sources }) => {
-        if (!alive) return;
-        setSourcesUi(sources.map((config) => ({ config, selected: true })));
-      })
-      .catch(() => alive && setSourcesUi([]));
+      .then(({ sources }) => alive && setAllSources(sources))
+      .catch(() => alive && setAllSources([]));
     void listSearchHistory()
       .then(({ list }) => alive && setHistory(list))
       .catch(() => {});
@@ -144,24 +129,11 @@ function SearchPageInner() {
       setFilterType(null);
       setFilterArea(null);
       setFilterYear(null);
-      setSourcesUi((prev) =>
-        (prev ?? []).map((s) => ({
-          ...s,
-          progress: configs.some((c) => c.key === s.config.key) ? undefined : s.progress,
-        }))
-      );
       try {
         const final = await searchStream({
           wd: q,
           sources: configs,
           signal: controller.signal,
-          onSource: (progress) => {
-            setSourcesUi((prev) =>
-              (prev ?? []).map((s) =>
-                s.config.key === progress.sourceKey ? { ...s, progress } : s
-              )
-            );
-          },
           onPartial: (items) => {
             // 逐源到达即展示（复制一份触发渲染）
             setResults([...items]);
@@ -190,36 +162,18 @@ function SearchPageInner() {
 
   // ?wd= 直达搜索（仅首次）
   useEffect(() => {
-    if (initialWd && !autoSearched.current && sourcesUi !== null) {
+    if (initialWd && !autoSearched.current && allSources !== null) {
       autoSearched.current = true;
-      void doSearch(
-        initialWd,
-        sourcesUi.filter((s) => s.selected).map((s) => s.config)
-      );
+      void doSearch(initialWd, allSources);
     }
-  }, [initialWd, sourcesUi, doSearch]);
+  }, [initialWd, allSources, doSearch]);
 
   useEffect(() => () => abortRef.current?.abort(), []);
-
-  function toggleSource(key: string) {
-    setSourcesUi(
-      (prev) =>
-        prev?.map((s) => (s.config.key === key ? { ...s, selected: !s.selected } : s)) ?? null
-    );
-  }
-
-  function toggleAll() {
-    setSourcesUi((prev) => {
-      if (!prev) return prev;
-      const allSelected = prev.every((s) => s.selected);
-      return prev.map((s) => ({ ...s, selected: !allSelected }));
-    });
-  }
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
     router.replace(`/search?wd=${encodeURIComponent(wd.trim())}`, { scroll: false });
-    void doSearch(wd, selectedSources);
+    void doSearch(wd, allSources ?? []);
   }
 
   const searched = results !== null;
@@ -326,62 +280,16 @@ function SearchPageInner() {
         </div>
         <button
           type="submit"
-          disabled={searching || selectedSources.length === 0}
+          disabled={searching || (allSources ?? []).length === 0}
           className="rounded-full bg-accent px-6 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {searching ? '搜索中' : '搜索'}
         </button>
       </form>
 
-      {/* 源选择 */}
-      <div className="no-scrollbar mt-3 flex items-center gap-2 overflow-x-auto pb-1">
-        <button
-          onClick={toggleAll}
-          className="shrink-0 rounded-full border border-overlay px-3 py-1.5 text-xs text-t2 transition hover:text-t1"
-        >
-          全选/反选
-        </button>
-        {(sourcesUi ?? []).map(({ config, selected, progress }) => {
-          const state = !selected
-            ? 'off'
-            : progress === undefined
-              ? searching
-                ? 'pending'
-                : 'idle'
-              : progress.ok
-                ? 'ok'
-                : 'fail';
-          return (
-            <button
-              key={config.key}
-              onClick={() => toggleSource(config.key)}
-              title={
-                state === 'fail'
-                  ? progress?.error || '该源搜索失败'
-                  : state === 'ok'
-                    ? `已返回 ${progress?.count ?? 0} 条`
-                    : config.name
-              }
-              className={cn(
-                'shrink-0 rounded-full px-3 py-1.5 text-xs transition',
-                !selected && 'border border-overlay text-t3',
-                selected && state !== 'fail' && 'bg-overlay text-t1',
-                state === 'fail' && 'border border-overlay text-t3 line-through',
-                state === 'pending' && 'animate-pulse'
-              )}
-            >
-              {config.name}
-              {state === 'ok' && progress?.count ? ` ${progress.count}` : ''}
-              {state === 'pending' ? ' …' : ''}
-              {state === 'fail' ? ' ×' : ''}
-            </button>
-          );
-        })}
-        {sourcesUi === null && <span className="text-xs text-t3">源加载中…</span>}
-        {sourcesUi?.length === 0 && (
-          <span className="text-xs text-t3">未配置数据源（DEFAULT_SOURCES），请联系站长</span>
-        )}
-      </div>
+      {allSources !== null && allSources.length === 0 && (
+        <p className="mt-3 text-xs text-t3">未配置可用数据源，请联系站长在后台添加</p>
+      )}
 
       {/* 搜索前：历史 + 热搜 */}
       {!searched && !searching && (
@@ -499,7 +407,7 @@ function SearchPageInner() {
                     ? undefined
                     : activeFilterCount > 0
                       ? '当前筛选条件下无结果，试试放宽筛选或清除'
-                      : '换个关键词，或检查上方数据源开关'
+                      : '换个关键词再试试'
                 }
               />
             ) : (
