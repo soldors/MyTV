@@ -5,20 +5,25 @@ import { getCloudflareContext } from '@opennextjs/cloudflare';
 import {
   DEFAULT_SITE_CONFIG,
   SEARCH_HISTORY_LIMIT,
+  type AdminUserRow,
   type ApiSourceInput,
   type ApiSourcePatch,
   type ApiSourceRecord,
+  type DailyCount,
   type FavoriteItem,
   type IStorage,
   type PlayRecord,
   type SearchHistoryItem,
   type SiteConfig,
   type SkipConfig,
+  type SourceCatalogEntry,
+  type SourceHealthSummary,
   type StoredUser,
   type SubscriptionRecord,
   type UserCredentials,
   type UserRole,
   type UserStatus,
+  type UserStatusCounts,
 } from './storage';
 
 interface UserRow {
@@ -77,6 +82,7 @@ interface SubscriptionRow {
   url: string;
   name: string | null;
   last_synced_at: number | null;
+  imported_count: number | null;
 }
 
 function mapApiSource(row: ApiSourceRow): ApiSourceRecord {
@@ -97,6 +103,7 @@ function mapSubscription(row: SubscriptionRow): SubscriptionRecord {
     url: row.url,
     name: row.name ?? undefined,
     lastSyncedAt: row.last_synced_at ?? undefined,
+    importedCount: row.imported_count ?? undefined,
   };
 }
 
@@ -105,6 +112,9 @@ function generateSourceKey(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(4));
   return 'db_' + [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
+
+const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
 
 function mapUser(row: UserRow): StoredUser {
   return {
@@ -168,16 +178,25 @@ export class D1Storage implements IStorage {
   async createUser(
     name: string,
     credentials: UserCredentials,
-    options: { role?: UserRole; status?: UserStatus } = {}
+    options: { role?: UserRole; status?: UserStatus; registerIp?: string } = {}
   ): Promise<StoredUser> {
     const role = options.role ?? 'user';
     const status = options.status ?? 'pending';
     const createdAt = Date.now();
     await this.db
       .prepare(
-        'INSERT INTO users (name, password_hash, salt, iterations, role, status, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)'
+        'INSERT INTO users (name, password_hash, salt, iterations, role, status, created_at, register_ip) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)'
       )
-      .bind(name, credentials.passwordHash, credentials.salt, credentials.iterations, role, status, createdAt)
+      .bind(
+        name,
+        credentials.passwordHash,
+        credentials.salt,
+        credentials.iterations,
+        role,
+        status,
+        createdAt,
+        options.registerIp ?? null
+      )
       .run();
     return { name, role, status, createdAt };
   }
@@ -451,19 +470,23 @@ export class D1Storage implements IStorage {
 
   async listSubscriptions(): Promise<SubscriptionRecord[]> {
     const res = await this.db
-      .prepare('SELECT id, url, name, last_synced_at FROM subscriptions ORDER BY id DESC')
+      .prepare('SELECT id, url, name, last_synced_at, imported_count FROM subscriptions ORDER BY id DESC')
       .all<SubscriptionRow>();
     return (res.results ?? []).map(mapSubscription);
   }
 
-  async addSubscription(url: string, name?: string): Promise<SubscriptionRecord> {
+  async addSubscription(url: string, name?: string, importedCount?: number): Promise<SubscriptionRecord> {
     const now = Date.now();
     await this.db
-      .prepare('INSERT INTO subscriptions (url, name, last_synced_at) VALUES (?1, ?2, ?3) ON CONFLICT (url) DO UPDATE SET name = excluded.name')
-      .bind(url, name ?? null, now)
+      .prepare(
+        `INSERT INTO subscriptions (url, name, last_synced_at, imported_count)
+         VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT (url) DO UPDATE SET name = excluded.name, imported_count = excluded.imported_count`
+      )
+      .bind(url, name ?? null, now, importedCount ?? null)
       .run();
     const row = await this.db
-      .prepare('SELECT id, url, name, last_synced_at FROM subscriptions WHERE url = ?1')
+      .prepare('SELECT id, url, name, last_synced_at, imported_count FROM subscriptions WHERE url = ?1')
       .bind(url)
       .first<SubscriptionRow>();
     return mapSubscription(row as SubscriptionRow);
@@ -474,11 +497,145 @@ export class D1Storage implements IStorage {
     return (res.meta.changes ?? 0) > 0;
   }
 
-  async touchSubscription(id: number): Promise<void> {
+  async touchSubscription(id: number, importedCount?: number): Promise<void> {
     await this.db
-      .prepare('UPDATE subscriptions SET last_synced_at = ?2 WHERE id = ?1')
-      .bind(id, Date.now())
+      .prepare('UPDATE subscriptions SET last_synced_at = ?2, imported_count = COALESCE(?3, imported_count) WHERE id = ?1')
+      .bind(id, Date.now(), importedCount ?? null)
       .run();
+  }
+
+  // —— 后台指标（M6） ——
+
+  async recordSourceOutcome(url: string, ok: boolean, ms: number): Promise<void> {
+    const ts = Date.now();
+    // hour 桶 + UNIQUE(url, hour)：同小时内后来的采样被 IGNORE，写入量 = 源数 × 24
+    await this.db
+      .prepare('INSERT INTO source_health (url, hour, ts, ok, ms) VALUES (?1, ?2, ?3, ?4, ?5)')
+      .bind(url, Math.floor(ts / HOUR_MS), ts, ok ? 1 : 0, Math.max(0, Math.round(ms)))
+      .run();
+  }
+
+  async getSourceHealthSince(sinceTs: number): Promise<SourceHealthSummary[]> {
+    const res = await this.db
+      .prepare(
+        `SELECT url, COUNT(*) AS samples, SUM(ok) AS ok_count, AVG(ms) AS avg_ms
+         FROM source_health WHERE ts >= ?1 GROUP BY url`
+      )
+      .bind(sinceTs)
+      .all<{ url: string; samples: number; ok_count: number; avg_ms: number }>();
+    return (res.results ?? []).map((row) => ({
+      url: row.url,
+      samples: row.samples,
+      okCount: row.ok_count ?? 0,
+      avgMs: Math.round(row.avg_ms ?? 0),
+    }));
+  }
+
+  async pruneSourceHealth(beforeTs: number): Promise<number> {
+    const res = await this.db.prepare('DELETE FROM source_health WHERE ts < ?1').bind(beforeTs).run();
+    return res.meta.changes ?? 0;
+  }
+
+  async saveSourceCatalog(url: string, entry: { ok: boolean; ms: number; total?: number }): Promise<void> {
+    await this.db
+      .prepare(
+        `INSERT INTO source_catalog (url, ok, ms, total, probed_at) VALUES (?1, ?2, ?3, ?4, ?5)
+         ON CONFLICT (url) DO UPDATE SET
+           ok = excluded.ok, ms = excluded.ms,
+           total = COALESCE(excluded.total, source_catalog.total), probed_at = excluded.probed_at`
+      )
+      .bind(url, entry.ok ? 1 : 0, Math.max(0, Math.round(entry.ms)), entry.total ?? null, Date.now())
+      .run();
+  }
+
+  async listSourceCatalog(): Promise<SourceCatalogEntry[]> {
+    const res = await this.db
+      .prepare('SELECT url, ok, ms, total, probed_at FROM source_catalog')
+      .all<{ url: string; ok: number | null; ms: number | null; total: number | null; probed_at: number | null }>();
+    return (res.results ?? []).map((row) => ({
+      url: row.url,
+      ok: row.ok === null || row.ok === undefined ? undefined : row.ok === 1,
+      ms: row.ms ?? undefined,
+      total: row.total ?? undefined,
+      probedAt: row.probed_at ?? undefined,
+    }));
+  }
+
+  async countUsersByStatus(): Promise<UserStatusCounts> {
+    const res = await this.db
+      .prepare('SELECT status, COUNT(*) AS n FROM users GROUP BY status')
+      .all<{ status: string; n: number }>();
+    const counts: UserStatusCounts = { total: 0, pending: 0, active: 0, disabled: 0 };
+    for (const row of res.results ?? []) {
+      counts.total += row.n;
+      if (row.status === 'pending' || row.status === 'active' || row.status === 'disabled') {
+        counts[row.status] += row.n;
+      }
+    }
+    return counts;
+  }
+
+  async countUsersCreatedBetween(fromTs: number, toTs: number): Promise<number> {
+    const row = await this.db
+      .prepare('SELECT COUNT(*) AS n FROM users WHERE created_at >= ?1 AND created_at < ?2')
+      .bind(fromTs, toTs)
+      .first<{ n: number }>();
+    return row?.n ?? 0;
+  }
+
+  async countPlaysBetween(fromTs: number, toTs: number): Promise<number> {
+    const row = await this.db
+      .prepare('SELECT COUNT(*) AS n FROM play_records WHERE save_time >= ?1 AND save_time < ?2')
+      .bind(fromTs, toTs)
+      .first<{ n: number }>();
+    return row?.n ?? 0;
+  }
+
+  async getDailyPlayCounts(sinceTs: number, tzOffsetMs: number): Promise<DailyCount[]> {
+    return this.dailyCounts('play_records', 'save_time', sinceTs, tzOffsetMs);
+  }
+
+  async getDailySignupCounts(sinceTs: number, tzOffsetMs: number): Promise<DailyCount[]> {
+    return this.dailyCounts('users', 'created_at', sinceTs, tzOffsetMs);
+  }
+
+  /**
+   * 按本地日聚合计数。表名/列名来自本文件内部常量（不接受外部输入），
+   * 拼接进 SQL 不构成注入面；?1/?2 仍走 bind。
+   */
+  private async dailyCounts(
+    table: 'play_records' | 'users',
+    column: 'save_time' | 'created_at',
+    sinceTs: number,
+    tzOffsetMs: number
+  ): Promise<DailyCount[]> {
+    const res = await this.db
+      .prepare(
+        // D1 把 JS number 绑定成 REAL，'/' 会变浮点除 → 显式截回整数日序号（值恒正，截断即向下取整）
+        `SELECT CAST((${column} + ?1) / ?3 AS INTEGER) AS day, COUNT(*) AS n
+         FROM ${table} WHERE ${column} >= ?2 GROUP BY day ORDER BY day`
+      )
+      .bind(tzOffsetMs, sinceTs, DAY_MS)
+      .all<{ day: number; n: number }>();
+    return (res.results ?? []).map((row) => ({ day: row.day, count: row.n }));
+  }
+
+  async listLatestUsers(limit: number): Promise<AdminUserRow[]> {
+    const res = await this.db
+      .prepare(
+        `SELECT rowid AS id, name, role, status, created_at, register_ip
+         FROM users ORDER BY created_at DESC LIMIT ?1`
+      )
+      .bind(limit)
+      .all<{ id: number; name: string; role: string; status: string; created_at: number; register_ip: string | null }>();
+    return (res.results ?? []).map((row) => ({
+      id: row.id,
+      name: row.name,
+      role: (row.role === 'admin' ? 'admin' : 'user') as UserRole,
+      status: (['pending', 'active', 'disabled'].includes(row.status) ? row.status : 'pending') as UserStatus,
+      createdAt: row.created_at,
+      registerIp: row.register_ip ?? undefined,
+    }));
   }
 }
 

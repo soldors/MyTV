@@ -4,10 +4,8 @@
 
 import { NextResponse } from 'next/server';
 import { guardRequest } from '@/lib/api-guard';
-import { getStorage } from '@/lib/d1-storage';
-import { getEnvSources } from '@/lib/env-sources';
 import { getEnvLiveSources } from '@/lib/env-live-sources';
-import type { SourceConfig } from '@/lib/types';
+import { listVodSources } from '@/lib/source-registry';
 
 export const runtime = 'nodejs';
 
@@ -15,25 +13,5 @@ export async function GET(req: Request) {
   const guarded = await guardRequest(req);
   if (guarded) return guarded;
 
-  const envSources = getEnvSources();
-  let dbSources: SourceConfig[] = [];
-  try {
-    const storage = await getStorage();
-    const records = await storage.listApiSources();
-    dbSources = records
-      .filter((r) => r.enabled)
-      .map((r) => ({
-        key: r.key,
-        name: r.name,
-        url: r.apiUrl,
-        detail: r.detailUrl,
-        isAdult: r.isAdult,
-      }));
-  } catch {
-    // DB 不可用时仍返回 env 源，前台不致完全不可用
-  }
-
-  const seenUrls = new Set(envSources.map((s) => s.url));
-  const sources = [...envSources, ...dbSources.filter((s) => !seenUrls.has(s.url))];
-  return NextResponse.json({ sources, liveSources: getEnvLiveSources() });
+  return NextResponse.json({ sources: await listVodSources(), liveSources: getEnvLiveSources() });
 }

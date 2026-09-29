@@ -96,3 +96,44 @@ export function getSiteConfig(): Promise<{ config: SiteConfig }> {
 export function saveSiteConfig(patch: Partial<SiteConfig>): Promise<{ config: SiteConfig }> {
   return fetchJson('/api/admin/site-config', jsonInit('PATCH', patch));
 }
+
+// —— 仪表盘统计（M6） ——
+
+export interface AdminStats {
+  users: { total: number; pending: number; active: number; disabled: number; todayNew: number; yesterdayNew: number };
+  plays: { today: number; yesterday: number };
+  catalog: { total: number; probedSources: number; sources: number; missingSources: number };
+  /** pct 为 null 表示窗口内没有任何真实请求采样——界面显示「未采集」而不是 0% */
+  availability: { pct: number | null; samples: number; sources: number; windowDays: number };
+  trend: { days: string[]; plays: number[]; signups: number[] };
+  latestUsers: Array<{
+    id: number;
+    name: string;
+    role: 'user' | 'admin';
+    status: 'pending' | 'active' | 'disabled';
+    createdAt: number;
+    registerIp?: string;
+  }>;
+}
+
+export interface SourceHealthEntry {
+  pct: number;
+  samples: number;
+  avgMs: number;
+  probe: { ok: boolean; ms?: number; total?: number; probedAt?: number } | null;
+}
+
+/** tz 传浏览器东偏移分钟数（-getTimezoneOffset()），日界按站长时区算 */
+export function getAdminStats(days: number, tzMinutes: number): Promise<AdminStats> {
+  const params = new URLSearchParams({ days: String(days), tz: String(tzMinutes) });
+  return fetchJson(`/api/admin/stats?${params.toString()}`);
+}
+
+export function getSourceHealth(days: number): Promise<{ windowDays: number; byUrl: Record<string, SourceHealthEntry> }> {
+  return fetchJson(`/api/admin/source-health?days=${days}`);
+}
+
+/** 逐源抓 CMS total 刷新收录量（出网请求，只在站长按下时跑） */
+export function refreshCatalog(): Promise<{ ok: number; failed: number; missingTotal: number; total: number; sources: number }> {
+  return fetchJson('/api/admin/catalog', jsonInit('POST', {}));
+}

@@ -4,7 +4,8 @@ import { NextResponse } from 'next/server';
 import { guardRequest } from '@/lib/api-guard';
 import { cmsRequestHeaders, parseDetail, parseDetailPageHtml } from '@/lib/cms-parser';
 import { fetchUpstream, getCache, setCache } from '@/lib/fetch-utils';
-import { checkBreaker, recordOutcome } from '@/lib/circuit-breaker';
+import { checkBreaker } from '@/lib/circuit-breaker';
+import { reportSourceOutcome } from '@/lib/source-health';
 import { getKvCache } from '@/lib/kv-cache';
 import { checkUpstreamAllowed } from '@/lib/ssrf';
 import type { SourceConfig, VideoDetail } from '@/lib/types';
@@ -51,6 +52,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: '无效的点播源配置' }, { status: 400 });
   }
 
+  const start = Date.now();
   try {
     // 命中缓存直接返回（仅缓存成功拿到剧集的结果）
     const detailRootForCache = (source.detail || baseUrl || '').replace(/\/+$/, '');
@@ -120,15 +122,15 @@ export async function GET(req: Request) {
     }
 
     if (!resolved || resolved.episodes.length === 0) {
-      recordOutcome(source.url, false);
+      await reportSourceOutcome(source.url, false, Date.now() - start);
       return NextResponse.json({ error: '未找到播放资源' }, { status: 404 });
     }
-    recordOutcome(source.url, true);
+    await reportSourceOutcome(source.url, true, Date.now() - start);
     setCache(cacheKey, resolved, DETAIL_CACHE_TTL);
     if (kv) await kv.put(cacheKey, resolved, DETAIL_KV_TTL_S);
     return NextResponse.json(resolved);
   } catch (err) {
-    recordOutcome(source.url, false);
+    await reportSourceOutcome(source.url, false, Date.now() - start);
     return NextResponse.json(
       { error: err instanceof Error ? err.message : '获取详情失败' },
       { status: 502 }

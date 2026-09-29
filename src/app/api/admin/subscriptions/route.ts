@@ -87,7 +87,7 @@ export async function POST(req: Request) {
     if (!target) return jsonError('订阅不存在', 404);
     try {
       const result = await importSubscription(target.url);
-      await storage.touchSubscription(id);
+      await storage.touchSubscription(id, result.imported);
       return NextResponse.json({ success: true, ...result });
     } catch (err) {
       return jsonError(err instanceof Error ? err.message : '同步失败', 502);
@@ -103,7 +103,7 @@ export async function POST(req: Request) {
     if (importResult.errors.length > 0 && importResult.imported === 0) {
       return jsonError(importResult.errors[0], 502);
     }
-    const subscription = await storage.addSubscription(url, name);
+    const subscription = await storage.addSubscription(url, name, importResult.imported);
     return NextResponse.json({ success: true, subscription, ...importResult });
   } catch (err) {
     return jsonError(err instanceof Error ? err.message : '导入失败', 502);

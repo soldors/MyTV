@@ -52,7 +52,8 @@ export async function POST(req: Request) {
   const user = await storage.createUser(
     name,
     { passwordHash: hashed.hash, salt: hashed.salt, iterations: hashed.iterations },
-    { status }
+    // 注册来源 IP 供后台「最新注册用户」列使用（D4）
+    { status, registerIp: clientIpOf(req) || undefined }
   );
   return NextResponse.json({
     success: true,

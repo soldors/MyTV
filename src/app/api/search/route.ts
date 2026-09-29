@@ -4,7 +4,8 @@ import { NextResponse } from 'next/server';
 import { guardRequest } from '@/lib/api-guard';
 import { cmsRequestHeaders, filterAdultResults, filterRelevantResults, normalizeTitle, parseSearchList } from '@/lib/cms-parser';
 import { fetchUpstream, getCache, setCache } from '@/lib/fetch-utils';
-import { checkBreaker, recordOutcome } from '@/lib/circuit-breaker';
+import { checkBreaker } from '@/lib/circuit-breaker';
+import { reportSourceOutcome } from '@/lib/source-health';
 import { getStorage } from '@/lib/d1-storage';
 import { getKvCache, shouldCacheSearch } from '@/lib/kv-cache';
 import { checkUpstreamAllowed } from '@/lib/ssrf';
@@ -173,10 +174,10 @@ async function searchSource(source: SourceConfig, wd: string): Promise<SourceSea
         })
       );
     const outcome = await Promise.race([runPromise, deadline]);
-    recordOutcome(source.url, outcome.ok);
+    await reportSourceOutcome(source.url, outcome.ok, outcome.ms ?? Date.now() - start);
     return outcome;
   } catch (err) {
-    recordOutcome(source.url, false);
+    await reportSourceOutcome(source.url, false, Date.now() - start);
     return finish({
       sourceKey: source.key,
       ok: false,

@@ -164,8 +164,30 @@ export interface IStorage {
 
   // —— 数据源订阅（M4 后台） ——
   listSubscriptions(): Promise<SubscriptionRecord[]>;
-  addSubscription(url: string, name?: string): Promise<SubscriptionRecord>;
+  addSubscription(url: string, name?: string, importedCount?: number): Promise<SubscriptionRecord>;
   deleteSubscription(id: number): Promise<boolean>;
-  /** 记录一次成功同步时间 */
-  touchSubscription(id: number): Promise<void>;
+  /** 记录一次成功同步时间与本次导入源数 */
+  touchSubscription(id: number, importedCount?: number): Promise<void>;
+
+  // —— 后台指标（M6） ——
+  /** 落一条源健康采样：同 url 同小时只留第一条（UNIQUE(url,hour) ON CONFLICT IGNORE） */
+  recordSourceOutcome(url: string, ok: boolean, ms: number): Promise<void>;
+  /** 聚合 ts >= sinceTs 的采样，按 url 分组 */
+  getSourceHealthSince(sinceTs: number): Promise<SourceHealthSummary[]>;
+  /** 删除 ts < beforeTs 的采样，返回删除行数 */
+  pruneSourceHealth(beforeTs: number): Promise<number>;
+  /** 写入/更新某源的最近探活快照与收录总量 */
+  saveSourceCatalog(url: string, entry: { ok: boolean; ms: number; total?: number }): Promise<void>;
+  listSourceCatalog(): Promise<SourceCatalogEntry[]>;
+  countUsersByStatus(): Promise<UserStatusCounts>;
+  /** 半开区间 [fromTs, toTs) 内注册的用户数 */
+  countUsersCreatedBetween(fromTs: number, toTs: number): Promise<number>;
+  /** 半开区间 [fromTs, toTs) 内有播放动作的记录条数（口径见 docs/09 §1.2） */
+  countPlaysBetween(fromTs: number, toTs: number): Promise<number>;
+  /** 按本地日聚合的播放量（ts >= sinceTs）；tzOffsetMs 决定「日」的边界 */
+  getDailyPlayCounts(sinceTs: number, tzOffsetMs: number): Promise<DailyCount[]>;
+  /** 按本地日聚合的注册量（ts >= sinceTs） */
+  getDailySignupCounts(sinceTs: number, tzOffsetMs: number): Promise<DailyCount[]>;
+  /** 最新注册用户（含 rowid 与注册 IP） */
+  listLatestUsers(limit: number): Promise<AdminUserRow[]>;
 }
