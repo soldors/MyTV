@@ -6,7 +6,7 @@ import { NextResponse } from 'next/server';
 import { guardRequest } from '@/lib/api-guard';
 import { checkUpstreamAllowed } from '@/lib/ssrf';
 import { fetchUpstream } from '@/lib/fetch-utils';
-import { parseSearchList } from '@/lib/cms-parser';
+import { buildCmsApi, parseSearchList } from '@/lib/cms-parser';
 import { parseCmsPagePayload } from '@/lib/cms-xml';
 import { getStorage } from '@/lib/d1-storage';
 
@@ -46,8 +46,7 @@ export async function POST(req: Request) {
 
   const start = Date.now();
   try {
-    const joiner = url.includes('?') ? '&' : '?';
-    const res = await fetchUpstream(`${url}${joiner}ac=videolist&wd=test`, {
+    const res = await fetchUpstream(buildCmsApi(url, 'ac=videolist&wd=test'), {
       timeoutMs: 6000,
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36', Accept: 'application/json, text/xml, */*' },
     });

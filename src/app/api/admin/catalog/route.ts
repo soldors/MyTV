@@ -5,7 +5,7 @@
 
 import { NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/api-guard';
-import { cmsRequestHeaders } from '@/lib/cms-parser';
+import { buildCmsApi, cmsRequestHeaders } from '@/lib/cms-parser';
 import { parseCmsPagePayload } from '@/lib/cms-xml';
 import { getStorage } from '@/lib/d1-storage';
 import { fetchUpstream } from '@/lib/fetch-utils';
@@ -43,7 +43,7 @@ export async function POST(req: Request) {
         const verdict = await checkUpstreamAllowed(source.url);
         if (!verdict.ok) return { ok: false, ms: 0, total: undefined as number | undefined };
         try {
-          const res = await fetchUpstream(`${source.url.replace(/\/+$/, '')}?ac=videolist&pg=1`, {
+          const res = await fetchUpstream(buildCmsApi(source.url, 'ac=videolist&pg=1'), {
             timeoutMs: SOURCE_TIMEOUT_MS,
             headers: cmsRequestHeaders(),
           });

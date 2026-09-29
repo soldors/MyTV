@@ -2,7 +2,7 @@
 
 import { NextResponse } from 'next/server';
 import { guardRequest } from '@/lib/api-guard';
-import { cmsRequestHeaders, filterAdultResults, filterRelevantResults, normalizeTitle, parseSearchList } from '@/lib/cms-parser';
+import { buildCmsApi, cmsRequestHeaders, filterAdultResults, filterRelevantResults, normalizeTitle, parseSearchList } from '@/lib/cms-parser';
 import { parseCmsPagePayload } from '@/lib/cms-xml';
 import { fetchUpstream, getCache, setCache } from '@/lib/fetch-utils';
 import { checkBreaker } from '@/lib/circuit-breaker';
@@ -142,9 +142,7 @@ async function searchSource(source: SourceConfig, wd: string, maxPages: number):
 
   const base = source.url.replace(/\/+$/, '');
   const fetchPage = async (page: number) => {
-    // 源地址自带 query（如 ?at=xml 强制 XML 输出）时用 & 拼接，避免双问号
-    const joiner = base.includes('?') ? '&' : '?';
-    const api = `${base}${joiner}ac=videolist&wd=${encodeURIComponent(wd)}&pg=${page}`;
+    const api = buildCmsApi(base, `ac=videolist&wd=${encodeURIComponent(wd)}&pg=${page}`);
     const res = await fetchUpstream(api, {
       timeoutMs: 8000,
       headers: cmsRequestHeaders(),

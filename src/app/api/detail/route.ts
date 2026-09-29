@@ -2,7 +2,7 @@
 
 import { NextResponse } from 'next/server';
 import { guardRequest } from '@/lib/api-guard';
-import { cmsRequestHeaders, parseDetail, parseDetailPageHtml } from '@/lib/cms-parser';
+import { buildCmsApi, cmsRequestHeaders, parseDetail, parseDetailPageHtml } from '@/lib/cms-parser';
 import { parseCmsPagePayload } from '@/lib/cms-xml';
 import { fetchUpstream, getCache, setCache } from '@/lib/fetch-utils';
 import { checkBreaker } from '@/lib/circuit-breaker';
@@ -88,9 +88,8 @@ export async function GET(req: Request) {
 
     let resolved: VideoDetail | null = null;
 
-    // 1) 标准列表接口（query 拼接兼容带 at=xml 等参数的源地址）
-    const joiner = source.url.includes('?') ? '&' : '?';
-    const api = `${source.url.replace(/\/+$/, '')}${joiner}ac=videolist&ids=${encodeURIComponent(id)}`;
+    // 1) 标准列表接口（源地址自带 query/ac 参数由 buildCmsApi 归一）
+    const api = buildCmsApi(source.url, `ac=videolist&ids=${encodeURIComponent(id)}`);
     const res = await fetchUpstream(api, { timeoutMs: 10000, headers: cmsRequestHeaders() });
     if (res.ok) {
       let data: unknown;

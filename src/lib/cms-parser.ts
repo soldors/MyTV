@@ -20,6 +20,19 @@ export function cmsRequestHeaders(): Record<string, string> {
   return { ...UA_HEADERS };
 }
 
+/**
+ * 构造列表/搜索/详情请求地址：统一附加我们的 ac=videolist 命令。
+ * 源地址自带的 ac= 参数先剥掉（重复参数各站取值不一，实测有站取第一个导致
+ * 拿到分类列表）；at=xml、key 等其他参数保留，query 拼接自适应 &/?。
+ */
+export function buildCmsApi(sourceUrl: string, extraQuery: string): string {
+  const stripped = sourceUrl.replace(/\/+$/, '').replace(/([?&])ac=[^&]*/g, '$1');
+  // 清理剥参后悬空的 ?/&（?ac=list 结尾 → ?；?ac=x&k=v → ?k=v）
+  const cleaned = stripped.replace(/\?&/g, '?').replace(/&&/g, '&').replace(/[?&]+$/, '');
+  const joiner = cleaned.includes('?') ? '&' : '?';
+  return `${cleaned}${joiner}${extraQuery}`;
+}
+
 /** 搜索响应 → 统一结果列表 */
 export function parseSearchList(
   data: unknown,
