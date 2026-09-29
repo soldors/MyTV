@@ -267,3 +267,10 @@ export function clearSearchHistory(): Promise<void> {
 export function proxied(url: string): string {
   return `/api/proxy/${encodeURIComponent(url)}`;
 }
+
+// —— Bangumi 每日放送 ——
+
+/** 按星期分组（1=周一…7=周日）的放送表；条目复用 DoubanItem 结构 */
+export function getBangumiCalendar(): Promise<Record<number, DoubanItem[]>> {
+  return fetchJson('/api/bangumi');
+}

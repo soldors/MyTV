@@ -9,6 +9,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import {
+  getBangumiCalendar,
   getDoubanRecommend,
   getHotList,
   listFavorites,
@@ -246,6 +247,8 @@ function HomeContent({ user }: { user: SessionUser }) {
   const [records, setRecords] = useState<PlayRecord[] | null>(null);
   const [favorites, setFavorites] = useState<FavoriteItem[] | null>(null);
   const [doubanRows, setDoubanRows] = useState<Record<string, DoubanItem[] | null>>({});
+  /** Bangumi 每日放送：今天星期几（1-7）→ 该日新番 */
+  const [bangumiToday, setBangumiToday] = useState<DoubanItem[] | null>(null);
   const [heroIndex, setHeroIndex] = useState(0);
 
   useEffect(() => {
@@ -270,6 +273,15 @@ function HomeContent({ user }: { user: SessionUser }) {
         if (alive) setDoubanRows((prev) => ({ ...prev, [row.key]: items }));
       })();
     }
+    // Bangumi 放送表：取「今天」的新番行（1=周一…7=周日）
+    void getBangumiCalendar()
+      .then((days: Record<number, DoubanItem[]>) => {
+        if (!alive) return;
+        const jsDay = new Date().getDay(); // 0=周日
+        const weekday = jsDay === 0 ? 7 : jsDay;
+        setBangumiToday(days[weekday] ?? []);
+      })
+      .catch(() => alive && setBangumiToday([]));
     return () => {
       alive = false;
     };
@@ -397,6 +409,13 @@ function HomeContent({ user }: { user: SessionUser }) {
           </SectionRow>
         );
       })}
+
+      {/* 今日新番（Bangumi 放送表，按当天星期取当日行） */}
+      {bangumiToday !== null && bangumiToday.length > 0 && (
+        <SectionRow title="今日新番">
+          <DoubanRow items={bangumiToday} />
+        </SectionRow>
+      )}
 
       {/* 全空引导 */}
       {!personalLoading && !anyDoubanRow && records?.length === 0 && favorites?.length === 0 && (

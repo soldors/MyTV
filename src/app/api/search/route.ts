@@ -207,7 +207,9 @@ function aggregateOutcomes(
   outcomes: SourceSearchOutcome[],
   wd: string,
   filterAdult: boolean,
-  customWords?: string[]
+  customWords?: string[],
+  /** 源 key → 权重（api_sources.weight；L16）：名称相同时按权重高者优先 */
+  weightOf?: (sourceKey: string) => number
 ): SearchResponse {
   const seen = new Set<string>();
   let list = outcomes.flatMap((o) => o.list).filter((item) => {
@@ -221,7 +223,7 @@ function aggregateOutcomes(
   // 部分源站做分词/OR 模糊搜索，按关键词过滤
   list = filterRelevantResults(list, wd);
 
-  // 精确命中（忽略标点差异）排在最前，其余按名称，名称相同按源名
+  // 精确命中（忽略标点差异）排最前 → 名称 → 同名按源权重降序（高权重源在前，L16）→ 源名
   const exact = normalizeTitle(wd);
   list.sort((a, b) => {
     const aExact = normalizeTitle(a.name || '') === exact ? 0 : 1;
@@ -229,6 +231,9 @@ function aggregateOutcomes(
     if (aExact !== bExact) return aExact - bExact;
     const nameCompare = (a.name || '').localeCompare(b.name || '', 'zh-Hans-CN');
     if (nameCompare !== 0) return nameCompare;
+    const weightCompare =
+      (weightOf?.(b.sourceKey) ?? 0) - (weightOf?.(a.sourceKey) ?? 0);
+    if (weightCompare !== 0) return weightCompare;
     return (a.sourceName || '').localeCompare(b.sourceName || '', 'zh-Hans-CN');
   });
 
@@ -270,6 +275,17 @@ export async function POST(req: Request) {
     body.filterAdult !== undefined ? body.filterAdult !== false : siteConfig.adultFilterEnabled;
   const customWords = siteConfig.adultFilterWords;
   const maxPages = clampPages(siteConfig.searchMaxPages ?? SEARCH_MAX_PAGES);
+  // 源权重映射（L16）：读一次 api_sources，名称相同的多源结果按权重降序
+  const weightByUrl = new Map<string, number>();
+  try {
+    for (const r of await (await getStorage()).listApiSources()) weightByUrl.set(r.apiUrl, r.weight);
+  } catch {
+    /* 读不到权重时按 0 处理，排序回落源名 */
+  }
+  const weightOf = (sourceKey: string): number => {
+    const source = sources.find((s) => s.key === sourceKey);
+    return source ? weightByUrl.get(source.url) ?? 0 : 0;
+  };
 
   const isStream = new URL(req.url).searchParams.get('stream') === '1';
   const cacheKey = searchCacheKey(wd, sources, filterAdult, customWords);
@@ -311,7 +327,7 @@ export async function POST(req: Request) {
 
   if (!isStream) {
     const outcomes = await Promise.all(sources.map((source) => searchSource(source, wd, maxPages)));
-    const payload = aggregateOutcomes(outcomes, wd, filterAdult, customWords);
+    const payload = aggregateOutcomes(outcomes, wd, filterAdult, customWords, weightOf);
     await persist(payload);
     return NextResponse.json(payload);
   }
@@ -339,7 +355,7 @@ export async function POST(req: Request) {
         })
       );
 
-      const payload = aggregateOutcomes(outcomes, wd, filterAdult, customWords);
+      const payload = aggregateOutcomes(outcomes, wd, filterAdult, customWords, weightOf);
       await persist(payload);
       send({ type: 'done', list: payload.list, failures: payload.failures });
       closed = true;
