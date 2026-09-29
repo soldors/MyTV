@@ -23,6 +23,7 @@ import { useRequireUser } from '@/hooks/use-require-user';
 import PosterCard from '@/components/site/poster-card';
 import { EmptyState, PosterGridSkeleton } from '@/components/site/empty-state';
 import { IconSearch, IconTrash } from '@/components/site/icons';
+import { normalizeTitle } from '@/lib/cms-parser';
 import { cn } from '@/lib/utils';
 
 const HOT_KEYWORDS = ['庆余年', '流浪地球', '狂飙', '繁花', '三体', '漫长的季节', '琅琊榜', '让子弹飞'];
@@ -233,6 +234,25 @@ function SearchPageInner() {
         (filterYear === null || item.year === filterYear)
     );
   }, [results, filterType, filterArea, filterYear]);
+
+  // 同名影片去重展示：归一化标题分组，每组取排序后的首位（精确命中/权重最优）作代表，
+  // 次要源在播放页「换源」面板切换（面板现搜命中服务端搜索缓存，通常毫秒级）
+  const groupedResults = useMemo(() => {
+    const groups: { item: SearchResultItem; sourceCount: number }[] = [];
+    const byTitle = new Map<string, { item: SearchResultItem; sourceCount: number }>();
+    for (const item of filteredResults) {
+      const key = normalizeTitle(item.name || '');
+      const existing = byTitle.get(key);
+      if (existing) {
+        existing.sourceCount += 1;
+      } else {
+        const group = { item, sourceCount: 1 };
+        byTitle.set(key, group);
+        groups.push(group);
+      }
+    }
+    return groups;
+  }, [filteredResults]);
 
   const typeFacets = useMemo(() => (searched ? buildFacets(results!, 'typeName') : []), [results, searched]);
   const areaFacets = useMemo(() => (searched ? buildFacets(results!, 'area') : []), [results, searched]);
@@ -484,12 +504,13 @@ function SearchPageInner() {
               />
             ) : (
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 md:gap-4 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
-                {filteredResults.map((item) => (
+                {groupedResults.map(({ item, sourceCount }) => (
                   <PosterCard
                     key={`${item.sourceKey}-${item.vodId}`}
                     title={item.name}
                     pic={item.pic}
                     remarks={[item.remarks, item.year].filter(Boolean).join(' · ') || undefined}
+                    badge={sourceCount > 1 ? `${sourceCount} 源` : undefined}
                     href={`/play/${encodeURIComponent(item.sourceKey)}/${encodeURIComponent(item.vodId)}`}
                   />
                 ))}

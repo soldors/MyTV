@@ -9,6 +9,7 @@
 
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
+import { useRouter } from 'next/navigation';
 import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   addFavorite,
@@ -21,13 +22,15 @@ import {
   removeFavorite,
   saveRecord,
   saveSkipConfig,
+  searchStream,
 } from '@/lib/client-api';
 import type { PlayerApi } from '@/components/player/art-player';
-import type { DoubanItem, PlayRecord, SkipConfig, VideoDetail } from '@/lib/types';
+import type { DoubanItem, PlayRecord, SearchResultItem, SkipConfig, VideoDetail } from '@/lib/types';
 import { useRequireUser } from '@/hooks/use-require-user';
 import PosterCard from '@/components/site/poster-card';
 import { EmptyState } from '@/components/site/empty-state';
-import { IconHeart, IconSearch } from '@/components/site/icons';
+import { IconClose, IconHeart, IconSearch } from '@/components/site/icons';
+import { normalizeTitle } from '@/lib/cms-parser';
 import { cn } from '@/lib/utils';
 
 const ArtPlayer = dynamic(() => import('@/components/player/art-player'), {
@@ -79,7 +82,12 @@ function PlayPageInner({ source: sourceKeyRaw, id, epPath }: { source: string; i
   const [descExpanded, setDescExpanded] = useState(false);
   const [markPanelOpen, setMarkPanelOpen] = useState(false);
   const [related, setRelated] = useState<DoubanItem[]>([]);
+  // 换源面板：打开时用当前标题现搜同名资源（服务端搜索缓存命中则毫秒级）
+  const [sourcePanelOpen, setSourcePanelOpen] = useState(false);
+  const [sourceCandidates, setSourceCandidates] = useState<SearchResultItem[] | null>(null);
+  const [sourceSearching, setSourceSearching] = useState(false);
   const playerApiRef = useRef<PlayerApi | null>(null);
+  const router = useRouter();
 
   // 解析源配置 + 详情 + 既有进度/收藏/跳过配置
   useEffect(() => {
@@ -167,6 +175,37 @@ function PlayPageInner({ source: sourceKeyRaw, id, epPath }: { source: string; i
     }
     // 同集号尽量保留，超出该线路集数则回落到最后一集
     setEpisodeIndex((prev) => Math.min(prev, lines[index].episodes.length - 1));
+  }
+
+  /** 换源候选：以当前标题聚合搜索，只保留同名影片（服务端缓存使搜索页跳转来的请求近零开销） */
+  async function loadSourceCandidates() {
+    if (!info?.title) return;
+    setSourceSearching(true);
+    try {
+      const { sources } = await getSources();
+      const res = await searchStream({ wd: info.title, sources });
+      const current = normalizeTitle(info.title);
+      setSourceCandidates(res.list.filter((i) => normalizeTitle(i.name || '') === current));
+    } catch {
+      setSourceCandidates([]);
+    } finally {
+      setSourceSearching(false);
+    }
+  }
+
+  function openSourcePanel() {
+    setSourcePanelOpen((v) => {
+      if (!v && sourceCandidates === null) void loadSourceCandidates();
+      return !v;
+    });
+  }
+
+  function switchSource(item: SearchResultItem) {
+    if (item.sourceKey === sourceKey && item.vodId === vodId) return;
+    // 集号尽量带走：目标源集数不足时播放页的 episodeUrl clamp 会回落最后一集
+    router.push(
+      `/play/${encodeURIComponent(item.sourceKey)}/${encodeURIComponent(item.vodId)}/${episodeIndex}`
+    );
   }
 
   async function toggleFavorite() {
@@ -343,13 +382,58 @@ function PlayPageInner({ source: sourceKeyRaw, id, epPath }: { source: string; i
           >
             片头/片尾
           </button>
-          <Link
-            href={`/search?wd=${encodeURIComponent(info?.title || '')}`}
-            className="text-t2 transition hover:text-t1"
+          <button
+            onClick={openSourcePanel}
+            className={cn(
+              'transition',
+              sourcePanelOpen ? 'text-accent' : 'text-t2 hover:text-t1'
+            )}
           >
             换源
-          </Link>
+          </button>
         </div>
+
+        {/* 换源面板：同名影片的各源候选，点击直接切换（保留集号） */}
+        {sourcePanelOpen && (
+          <div className="mt-3 rounded-lg border border-overlay/60 bg-elevated p-4">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-medium text-t2">换源 · 同名影片的其他源</p>
+              <button onClick={() => setSourcePanelOpen(false)} aria-label="关闭换源" className="text-t3 hover:text-t1">
+                <IconClose className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            {sourceSearching ? (
+              <p className="mt-3 text-xs text-t3">正在搜索同名资源…</p>
+            ) : (sourceCandidates ?? []).length <= 1 ? (
+              <p className="mt-3 text-xs text-t3">
+                {(sourceCandidates ?? []).length === 1 ? '当前已是唯一可用的源' : '没有搜到其他源，稍后可重试'}
+              </p>
+            ) : (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {sourceCandidates!.map((c) => {
+                  const isCurrent = c.sourceKey === sourceKey && c.vodId === vodId;
+                  return (
+                    <button
+                      key={`${c.sourceKey}-${c.vodId}`}
+                      onClick={() => switchSource(c)}
+                      disabled={isCurrent}
+                      className={cn(
+                        'rounded-lg px-3 py-1.5 text-xs transition',
+                        isCurrent
+                          ? 'cursor-default bg-accent/15 font-medium text-accent'
+                          : 'border border-overlay text-t2 hover:border-accent/50 hover:text-t1'
+                      )}
+                    >
+                      {c.sourceName}
+                      {c.remarks && <span className="ml-1 text-t3">{c.remarks}</span>}
+                      {isCurrent && <span className="ml-1">（当前）</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* 片头/片尾标记面板 */}
         {markPanelOpen && (

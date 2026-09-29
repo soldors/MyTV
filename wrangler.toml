@@ -3,6 +3,14 @@ main = ".open-next/worker.js"
 compatibility_date = "2026-09-28"
 compatibility_flags = ["nodejs_compat"]
 
+# 自定义域名（workers.dev 被 SNI 封锁后的国内可达入口）：
+# 前置条件 —— mytvverse.xyz 已在 Cloudflare 账号添加为 zone 且 NS 已从注册商迁入并激活。
+# custom_domain 由 Workers 自动建 DNS 记录并签发证书，无需手工加 A/CNAME。
+routes = [
+  { pattern = "mytvverse.xyz", custom_domain = true },
+  { pattern = "www.mytvverse.xyz", custom_domain = true },
+]
+
 [assets]
 directory = ".open-next/assets"
 binding = "ASSETS"

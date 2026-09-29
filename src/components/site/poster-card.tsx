@@ -13,13 +13,15 @@ interface PosterCardProps {
   pic?: string;
   remarks?: string;
   rating?: string;
+  /** 左上角角标（如「12 源」），与右上角评分错开 */
+  badge?: string;
   /** 继续观看进度（0-1），显示底部红条 */
   progress?: number;
   href: string;
   className?: string;
 }
 
-export default function PosterCard({ title, pic, remarks, rating, progress, href, className }: PosterCardProps) {
+export default function PosterCard({ title, pic, remarks, rating, badge, progress, href, className }: PosterCardProps) {
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
 
@@ -66,6 +68,13 @@ export default function PosterCard({ title, pic, remarks, rating, progress, href
         <p className="truncate text-xs font-medium text-t1 md:text-sm">{title}</p>
         {remarks && <p className="truncate text-[10px] text-t2 md:text-xs">{remarks}</p>}
       </div>
+
+      {/* 多源角标（左上） */}
+      {badge && (
+        <span className="absolute left-1.5 top-1.5 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-semibold text-t2">
+          {badge}
+        </span>
+      )}
 
       {/* 评分角标 */}
       {rating && (
