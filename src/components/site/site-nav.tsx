@@ -10,10 +10,11 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
 import { useSession } from '@/hooks/use-session';
-import { IconHome, IconSearch, IconUser } from './icons';
+import { IconHome, IconSearch, IconTv, IconUser } from './icons';
 
 const NAV_LINKS = [
   { href: '/', label: '首页', icon: IconHome },
+  { href: '/live', label: '直播', icon: IconTv },
   { href: '/search', label: '搜索', icon: IconSearch },
   { href: '/my', label: '我的', icon: IconUser },
 ];
@@ -98,7 +99,7 @@ export default function SiteNav() {
       </header>
 
       {/* 手机底部标签栏 */}
-      <nav className="fixed inset-x-0 bottom-0 z-40 grid h-16 grid-cols-3 border-t border-overlay/60 bg-bg/95 backdrop-blur-md md:hidden">
+      <nav className="fixed inset-x-0 bottom-0 z-40 grid h-16 grid-cols-4 border-t border-overlay/60 bg-bg/95 backdrop-blur-md md:hidden">
         {NAV_LINKS.map(({ href, label, icon: Icon }) => {
           const active = isActive(href);
           return (

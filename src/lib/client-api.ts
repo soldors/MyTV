@@ -3,6 +3,9 @@
 
 import type {
   FavoriteItem,
+  LiveEpgResponse,
+  LivePlaylistResponse,
+  LiveSourceConfig,
   PlayRecord,
   SearchHistoryItem,
   SearchResponse,
@@ -61,8 +64,24 @@ export function logout(): Promise<void> {
 
 // —— 数据源 ——
 
-export function getSources(): Promise<{ sources: SourceConfig[] }> {
+export function getSources(): Promise<{ sources: SourceConfig[]; liveSources: LiveSourceConfig[] }> {
   return fetchJson('/api/sources');
+}
+
+// —— 直播（M5） ——
+
+export function getLivePlaylist(
+  url: string,
+  options: { force?: boolean } = {}
+): Promise<LivePlaylistResponse> {
+  const params = new URLSearchParams({ url });
+  if (options.force) params.set('force', '1');
+  return fetchJson(`/api/live/playlist?${params.toString()}`);
+}
+
+export function getLiveEpg(epgUrl: string, channel: string): Promise<LiveEpgResponse> {
+  const params = new URLSearchParams({ url: epgUrl, channel });
+  return fetchJson(`/api/live/epg?${params.toString()}`);
 }
 
 // —— 搜索（流式 NDJSON） ——

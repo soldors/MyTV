@@ -110,6 +110,15 @@ export function IconFilm({ className }: IconProps) {
   );
 }
 
+export function IconTv({ className }: IconProps) {
+  return (
+    <svg {...base(className)}>
+      <rect x="3" y="7" width="18" height="13" rx="2" />
+      <path d="m8 3 4 4 4-4" />
+    </svg>
+  );
+}
+
 export function IconSettings({ className }: IconProps) {
   return (
     <svg {...base(className)}>
