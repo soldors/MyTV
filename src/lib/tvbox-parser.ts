@@ -89,6 +89,64 @@ export function parseSubscriptionJson(text: string): unknown {
   }
 }
 
+// —— 订阅响应体形态解码 ——
+
+/** latin1（按字节直读）解码：二进制段定位用，不产生替换字符 */
+function latin1(bytes: Uint8Array): string {
+  let out = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    out += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return out;
+}
+
+/** 从后往前找两字节序列（JPEG EOI = FFD9），找不到返回 -1 */
+function lastIndexOfSeq(bytes: Uint8Array, seq: [number, number]): number {
+  for (let i = bytes.length - 2; i >= 0; i--) {
+    if (bytes[i] === seq[0] && bytes[i + 1] === seq[1]) return i;
+  }
+  return -1;
+}
+
+/** 尝试把纯 base64 文本解成 UTF-8 JSON；非 base64 / 非 JSON / 非 UTF-8 返回 null */
+function tryBase64Utf8(text: string): string | null {
+  const compact = text.replace(/\s+/g, '');
+  if (compact.length < 8 || !/^[A-Za-z0-9+/]+={0,2}$/.test(compact)) return null;
+  try {
+    const bin = atob(compact);
+    const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+    // fatal：解不出合法 UTF-8 说明不是文本载荷，判失败
+    const utf8 = new TextDecoder('utf-8', { fatal: true }).decode(bytes).trim();
+    return utf8.startsWith('{') || utf8.startsWith('[') ? utf8 : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 订阅响应体解码：兼容三类形态，返回可直接进 parseSubscriptionJson 的文本。
+ * 1) 明文 JSON（含带注释的宽容形态）；
+ * 2) base64 包装的 JSON；
+ * 3) 图片伪装（饭太硬式 /tv 端点）：随机 JPEG 尾部拼接 `垃圾**<base64>`，
+ *    FFD9 之后取 `**` 后段解码。识别失败返回 null，由调用方报格式错误。
+ */
+export function decodeTvboxPayload(bytes: Uint8Array): string | null {
+  if (bytes.length > 4 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    const eoi = lastIndexOfSeq(bytes, [0xff, 0xd9]);
+    if (eoi < 0 || eoi + 2 >= bytes.length) return null; // 纯图片，无载荷
+    const payload = latin1(bytes.subarray(eoi + 2)).trim();
+    const star = payload.indexOf('**');
+    return tryBase64Utf8(star >= 0 ? payload.slice(star + 2) : payload);
+  }
+  const text = new TextDecoder('utf-8', { fatal: false })
+    .decode(bytes)
+    .replace(/^\uFEFF/, '')
+    .trim();
+  if (text.startsWith('{') || text.startsWith('[')) return text;
+  return tryBase64Utf8(text);
+}
+
 /**
  * 剥离 JSON 中的注释与尾随逗号（仅作用于字符串外部）。
  * 必须先剥注释再剥尾随逗号：`[1, // 注释\n]` 里的逗号隔着注释，

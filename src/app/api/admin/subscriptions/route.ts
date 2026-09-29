@@ -7,7 +7,7 @@ import { getStorage } from '@/lib/d1-storage';
 import { getEnvSources } from '@/lib/env-sources';
 import { fetchUpstream } from '@/lib/fetch-utils';
 import { checkUpstreamAllowed } from '@/lib/ssrf';
-import { parseSubscriptionJson, parseSubscriptionPayload } from '@/lib/tvbox-parser';
+import { decodeTvboxPayload, parseSubscriptionJson, parseSubscriptionPayload } from '@/lib/tvbox-parser';
 
 export const runtime = 'nodejs';
 
@@ -25,13 +25,18 @@ async function importSubscription(url: string): Promise<ImportResult> {
     result.errors.push(verdict.reason);
     return result;
   }
-  // 读文本而非 json()：部分 TVBox 配置带注释/尾随逗号，需要宽容解析
-  const res = await fetchUpstream(url, { timeoutMs: 8000, headers: { Accept: 'application/json' } });
+  // 读字节而非文本：TVBox 接口地址（饭太硬式 /tv 端点）返回的可能是图片伪装
+  // 或 base64 包装载荷，decodeTvboxPayload 统一还原为 JSON 文本再宽容解析
+  const res = await fetchUpstream(url, { timeoutMs: 8000, headers: { Accept: 'application/json, image/*, */*' } });
   if (!res.ok) {
     result.errors.push(`订阅地址返回 HTTP ${res.status}`);
     return result;
   }
-  const text = await res.text();
+  const text = decodeTvboxPayload(new Uint8Array(await res.arrayBuffer()));
+  if (text === null) {
+    result.errors.push('订阅内容不是合法的 JSON，也无法从图片/base64 载荷中解码');
+    return result;
+  }
 
   const parsed = parseSubscriptionPayload(parseSubscriptionJson(text));
   const storage = await getStorage();

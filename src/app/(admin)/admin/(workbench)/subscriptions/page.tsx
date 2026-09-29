@@ -83,14 +83,15 @@ export default function AdminSubscriptionsPage() {
     <div>
       <h1 className="text-lg font-bold text-t1">TVBox / SourceList 订阅</h1>
       <p className="mt-1 text-[11px] text-t3">
-        粘贴订阅 URL 立即导入：type:1 的苹果CMS 点播源入库（去重），Spider / XML 等自动跳过；已导入的源在「数据源管理」维护。
+        粘贴订阅地址立即导入：.json 配置与 TVBox 接口地址（饭太硬式 /tv，图片/base64 伪装自动解码）都支持；
+        苹果CMS 点播源（JSON/XML）入库（去重），Spider 等自动跳过；已导入的源在「数据源管理」维护。
       </p>
 
       <form onSubmit={submit} className="mt-4 flex flex-wrap gap-2">
         <input
           value={url}
           onChange={(e) => setUrl(e.target.value)}
-          placeholder="https://…/config.json"
+          placeholder="https://…/config.json 或 http://…/tv 接口地址"
           className="min-w-52 flex-1 rounded-lg border border-overlay bg-elevated px-3 py-2 text-sm text-t1 outline-none focus:border-accent"
         />
         <input
