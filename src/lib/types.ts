@@ -156,13 +156,17 @@ export interface SkipConfig {
   outroEnd: number;
 }
 
-/** 站点级配置（admin_configs.config_json，M4 后台读写） */
+/** 站点级配置（admin_configs.config_json，M4 后台读写；M6 内容运营扩词库与搜索页数） */
 export interface SiteConfig {
   siteName?: string;
   announcement?: string;
   registrationEnabled: boolean;
   registrationApproval: boolean;
   adultFilterEnabled: boolean;
+  /** 自定义内容过滤词（内容运营页维护；命中名称或分类即过滤） */
+  adultFilterWords?: string[];
+  /** 搜索每源最大抓取页数（1-50；未设置时回落 SEARCH_MAX_PAGES 环境变量） */
+  searchMaxPages?: number;
 }
 
 // —— 直播 / IPTV ——

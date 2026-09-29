@@ -32,6 +32,23 @@ export async function PATCH(req: Request) {
   for (const key of ['registrationEnabled', 'registrationApproval', 'adultFilterEnabled'] as const) {
     if (body[key] !== undefined) patch[key] = body[key] === true;
   }
+  if (body.searchMaxPages !== undefined) {
+    const n = Math.trunc(Number(body.searchMaxPages));
+    if (!Number.isFinite(n) || n < 1 || n > 50) return jsonError('搜索页数须为 1-50', 400);
+    patch.searchMaxPages = n;
+  }
+  if (body.adultFilterWords !== undefined) {
+    const raw = Array.isArray(body.adultFilterWords) ? body.adultFilterWords : [];
+    const words = [
+      ...new Set(
+        raw
+          .filter((w): w is string => typeof w === 'string')
+          .map((w) => w.trim())
+          .filter((w) => w.length > 0 && w.length <= 32)
+      ),
+    ].slice(0, 100);
+    patch.adultFilterWords = words;
+  }
   if (body.siteName !== undefined) {
     const siteName = typeof body.siteName === 'string' ? body.siteName.trim() : '';
     patch.siteName = siteName || undefined;

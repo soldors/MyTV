@@ -54,6 +54,16 @@ export async function getKvCache(): Promise<KvCache | null> {
   return cached;
 }
 
+/** 取 KV 原始绑定（缓存管理页的键空间列举/清除需要 list/delete，超出读写封装范围） */
+export async function getKvRaw(): Promise<KVNamespace | null> {
+  try {
+    const { env } = await getCloudflareContext({ async: true });
+    return (env as { KV?: KVNamespace }).KV ?? null;
+  } catch {
+    return null;
+  }
+}
+
 // —— 搜索高频词门控（仅缓存重复搜索，防写额度被打爆） ——
 
 /** 同一搜索 key 的窗口（与搜索 KV TTL 对齐） */

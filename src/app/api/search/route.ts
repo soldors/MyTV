@@ -14,7 +14,7 @@ import type { SearchResponse, SearchStreamEvent, SourceConfig, SourceSearchOutco
 export const runtime = 'nodejs';
 
 /** 站点配置读取失败时回落默认（成人过滤默认开 #8） */
-async function getSiteConfigSafe(): Promise<{ adultFilterEnabled: boolean }> {
+async function getSiteConfigSafe(): Promise<{ adultFilterEnabled: boolean; adultFilterWords?: string[]; searchMaxPages?: number }> {
   try {
     return await (await getStorage()).getSiteConfig();
   } catch {
@@ -37,10 +37,17 @@ const SEARCH_KV_TTL_S = (() => {
   return Number.isFinite(n) ? Math.min(Math.max(n, 60), 86_400) : 1800;
 })();
 
-/** 缓存键：wd + 成人过滤 + 排序后的源地址集合（直接用完整字符串，避免哈希碰撞串缓存） */
-function searchCacheKey(wd: string, sources: SourceConfig[], filterAdult: boolean): string {
+/** 缓存键：wd + 成人过滤 + 自定义词库 + 排序后的源地址集合（直接用完整字符串，避免哈希碰撞串缓存） */
+function searchCacheKey(
+  wd: string,
+  sources: SourceConfig[],
+  filterAdult: boolean,
+  customWords?: string[]
+): string {
   const urls = sources.map((s) => s.url.replace(/\/+$/, '')).sort().join('|');
-  return `search:${wd}\n${filterAdult ? 1 : 0}\n${urls}`;
+  // 词库参与键：站长改词后旧缓存不再命中（否则过滤词对已缓存结果失效）
+  const wordsKey = customWords?.length ? `\n${customWords.join('|')}` : '';
+  return `search:${wd}\n${filterAdult ? 1 : 0}${wordsKey}\n${urls}`;
 }
 
 /**
@@ -64,6 +71,11 @@ const SEARCH_SOURCE_TIMEOUT_MS = (() => {
   return Math.min(60000, Math.max(3000, n));
 })();
 
+/** 每源页数收敛（站点配置或环境变量来源都过这一关） */
+function clampPages(n: number): number {
+  return Number.isFinite(n) ? Math.min(Math.max(Math.trunc(n), 1), 50) : 5;
+}
+
 /** AbortSignal.timeout / 源级死线中断均以 TimeoutError 语义呈现（直接抛出或挂在 cause 上） */
 function isTimeoutError(err: unknown): boolean {
   const candidates: unknown[] = [err, err instanceof Error ? err.cause : undefined];
@@ -82,7 +94,7 @@ function friendlyError(err: unknown): string {
  * 每个源先取第一页并读取 pagecount，再并行抓取后续页（上限 SEARCH_MAX_PAGES），
  * 整源受 SEARCH_SOURCE_TIMEOUT_MS 总死线约束。
  */
-async function searchSource(source: SourceConfig, wd: string): Promise<SourceSearchOutcome> {
+async function searchSource(source: SourceConfig, wd: string, maxPages: number): Promise<SourceSearchOutcome> {
   const start = Date.now();
   const finish = (outcome: Omit<SourceSearchOutcome, 'ms'>): SourceSearchOutcome => ({
     ...outcome,
@@ -144,7 +156,7 @@ async function searchSource(source: SourceConfig, wd: string): Promise<SourceSea
     const list = parseSearchList(first, source);
     // 源站真实总页数与配置上限取较小者；pagecount 缺失或非法时视为 1 页
     const rawPageCount = parseInt(String((first as { pagecount?: unknown }).pagecount ?? '1'), 10);
-    const pageCount = Math.min(Number.isFinite(rawPageCount) ? Math.max(1, rawPageCount) : 1, SEARCH_MAX_PAGES);
+    const pageCount = Math.min(Number.isFinite(rawPageCount) ? Math.max(1, rawPageCount) : 1, maxPages);
     if (pageCount > 1) {
       const extraPages = await Promise.all(
         Array.from({ length: pageCount - 1 }, (_, i) => i + 2).map(async (page) => {
@@ -191,7 +203,12 @@ async function searchSource(source: SourceConfig, wd: string): Promise<SourceSea
 }
 
 /** 合并 + 去重 + 过滤 + 排序，stream 与非 stream 两种模式共用 */
-function aggregateOutcomes(outcomes: SourceSearchOutcome[], wd: string, filterAdult: boolean): SearchResponse {
+function aggregateOutcomes(
+  outcomes: SourceSearchOutcome[],
+  wd: string,
+  filterAdult: boolean,
+  customWords?: string[]
+): SearchResponse {
   const seen = new Set<string>();
   let list = outcomes.flatMap((o) => o.list).filter((item) => {
     const key = `${item.sourceKey}_${item.vodId}`;
@@ -200,7 +217,7 @@ function aggregateOutcomes(outcomes: SourceSearchOutcome[], wd: string, filterAd
     return true;
   });
 
-  list = filterAdultResults(list, filterAdult);
+  list = filterAdultResults(list, filterAdult, customWords);
   // 部分源站做分词/OR 模糊搜索，按关键词过滤
   list = filterRelevantResults(list, wd);
 
@@ -247,14 +264,15 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: '请至少选择一个点播源' }, { status: 400 });
   }
   const sources = body.sources.slice(0, 50);
-  // 过滤默认值接站点配置（后台可关 #8）；请求显式指定时以请求为准
+  // 站点配置一次读取三用：过滤默认（后台可关 #8）/ 自定义词库 / 每源最大抓取页数
+  const siteConfig = await getSiteConfigSafe();
   const filterAdult =
-    body.filterAdult !== undefined
-      ? body.filterAdult !== false
-      : (await getSiteConfigSafe()).adultFilterEnabled;
+    body.filterAdult !== undefined ? body.filterAdult !== false : siteConfig.adultFilterEnabled;
+  const customWords = siteConfig.adultFilterWords;
+  const maxPages = clampPages(siteConfig.searchMaxPages ?? SEARCH_MAX_PAGES);
 
   const isStream = new URL(req.url).searchParams.get('stream') === '1';
-  const cacheKey = searchCacheKey(wd, sources, filterAdult);
+  const cacheKey = searchCacheKey(wd, sources, filterAdult, customWords);
 
   /** 缓存命中统一出口：流式模式也走 done 事件，客户端解析逻辑保持单一 */
   const respondFromCache = (payload: SearchResponse, layer: 'memory' | 'kv') => {
@@ -292,8 +310,8 @@ export async function POST(req: Request) {
   };
 
   if (!isStream) {
-    const outcomes = await Promise.all(sources.map((source) => searchSource(source, wd)));
-    const payload = aggregateOutcomes(outcomes, wd, filterAdult);
+    const outcomes = await Promise.all(sources.map((source) => searchSource(source, wd, maxPages)));
+    const payload = aggregateOutcomes(outcomes, wd, filterAdult, customWords);
     await persist(payload);
     return NextResponse.json(payload);
   }
@@ -315,13 +333,13 @@ export async function POST(req: Request) {
       const outcomes: SourceSearchOutcome[] = new Array(sources.length);
       await Promise.all(
         sources.map(async (source, i) => {
-          const outcome = await searchSource(source, wd);
+          const outcome = await searchSource(source, wd, maxPages);
           outcomes[i] = outcome;
           send({ type: 'source', ...outcome });
         })
       );
 
-      const payload = aggregateOutcomes(outcomes, wd, filterAdult);
+      const payload = aggregateOutcomes(outcomes, wd, filterAdult, customWords);
       await persist(payload);
       send({ type: 'done', list: payload.list, failures: payload.failures });
       closed = true;

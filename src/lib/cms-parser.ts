@@ -186,9 +186,24 @@ export function isAdultContent(typeName: string | undefined): boolean {
   return ADULT_KEYWORDS.some((k) => typeName.includes(k));
 }
 
-export function filterAdultResults<T extends { typeName?: string }>(items: T[], enabled: boolean): T[] {
+/** 自定义过滤词命中（名称或分类；词与目标都做 trim，空词不参与） */
+function hitsCustomWord(words: string[] | undefined, name: string | undefined, typeName: string | undefined): boolean {
+  if (!words || words.length === 0) return false;
+  const haystacks = [name, typeName].filter((s): s is string => Boolean(s));
+  return words.some((w) => haystacks.some((h) => h.includes(w)));
+}
+
+/**
+ * 敏感内容过滤：内置分类关键词（与上游一致）+ 站长自定义词库（内容运营页维护）。
+ * enabled=false 时全部放行（#8 后台可关）。
+ */
+export function filterAdultResults<T extends { name?: string; typeName?: string }>(
+  items: T[],
+  enabled: boolean,
+  customWords?: string[]
+): T[] {
   if (!enabled) return items;
-  return items.filter((item) => !isAdultContent(item.typeName));
+  return items.filter((item) => !isAdultContent(item.typeName) && !hitsCustomWord(customWords, item.name, item.typeName));
 }
 
 /**

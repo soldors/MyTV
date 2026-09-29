@@ -1,41 +1,12 @@
 'use client';
 
-// 站点设置（M4 一期最小，#15）：注册开关 / 注册审批 / 成人过滤 / 站点名 / 公告。
+// 站点设置（M6 瘦身）：仅基本信息（站点名/公告）——注册与内容过滤开关迁至「内容运营」。
 
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { getSiteConfig, saveSiteConfig } from '@/lib/admin-api';
 import type { SiteConfig } from '@/lib/types';
 import { AdminLoading, useRequireAdmin } from '@/components/admin/admin-guard';
-
-function Toggle({
-  label,
-  hint,
-  value,
-  onChange,
-}: {
-  label: string;
-  hint: string;
-  value: boolean;
-  onChange: (v: boolean) => void;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-4 rounded-lg border border-overlay/60 bg-elevated px-4 py-3">
-      <div>
-        <p className="text-sm text-t1">{label}</p>
-        <p className="mt-0.5 text-[11px] text-t3">{hint}</p>
-      </div>
-      <button
-        onClick={() => onChange(!value)}
-        aria-label={label}
-        className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${value ? 'bg-accent' : 'bg-overlay'}`}
-      >
-        <span
-          className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${value ? 'left-[18px]' : 'left-0.5'}`}
-        />
-      </button>
-    </div>
-  );
-}
 
 export default function AdminSettingsPage() {
   const { ready } = useRequireAdmin();
@@ -77,31 +48,10 @@ export default function AdminSettingsPage() {
     <div>
       <h1 className="text-lg font-bold text-t1">站点设置</h1>
 
-      <div className="mt-5 space-y-3">
-        <Toggle
-          label="开放注册"
-          hint="关闭后 /api/user/register 拒绝新注册"
-          value={config.registrationEnabled}
-          onChange={(v) => void save({ registrationEnabled: v })}
-        />
-        <Toggle
-          label="注册需审批"
-          hint="开启时新用户注册后为「待审批」状态，需在此批准后方可登录（#9）"
-          value={config.registrationApproval}
-          onChange={(v) => void save({ registrationApproval: v })}
-        />
-        <Toggle
-          label="成人内容过滤"
-          hint="搜索结果默认过滤成人源与敏感内容（#8）；请求显式指定时以请求为准"
-          value={config.adultFilterEnabled}
-          onChange={(v) => void save({ adultFilterEnabled: v })}
-        />
-      </div>
-
-      <section className="mt-6 rounded-lg border border-overlay/60 bg-elevated p-4">
+      <section className="mt-5 rounded-lg border border-overlay/60 bg-elevated p-4">
         <h2 className="text-sm font-semibold text-t1">基本信息</h2>
         <label className="mt-3 block text-xs text-t2">
-          站点名称（预留，前台品牌位使用）
+          站点名称（前台顶栏品牌位；留空显示 MyTV）
           <input
             value={siteName}
             onChange={(e) => setSiteName(e.target.value)}
@@ -110,7 +60,7 @@ export default function AdminSettingsPage() {
           />
         </label>
         <label className="mt-3 block text-xs text-t2">
-          公告（预留，前台公告条使用）
+          公告（前台公告条，可关闭；内容更新后对所有用户重新显示）
           <textarea
             value={announcement}
             onChange={(e) => setAnnouncement(e.target.value)}
@@ -131,8 +81,12 @@ export default function AdminSettingsPage() {
         </div>
       </section>
 
-      <p className="mt-6 text-[11px] leading-relaxed text-t3">
-        密码门禁（PASSWORD）与代理密钥（PROXY_SECRET）属部署密钥，经 wrangler secret 管理，不在此页。
+      <p className="mt-5 text-[11px] leading-relaxed text-t3">
+        注册开关 / 注册审批 / 成人过滤 / 过滤词库 / 搜索页数已迁至
+        <Link href="/admin/content" className="mx-1 underline hover:text-t2">
+          内容运营
+        </Link>
+        ；密码门禁（PASSWORD）与代理密钥（PROXY_SECRET）属部署密钥，经 wrangler secret 管理。
       </p>
     </div>
   );

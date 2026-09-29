@@ -137,3 +137,33 @@ export function getSourceHealth(days: number): Promise<{ windowDays: number; byU
 export function refreshCatalog(): Promise<{ ok: number; failed: number; missingTotal: number; total: number; sources: number }> {
   return fetchJson('/api/admin/catalog', jsonInit('POST', {}));
 }
+
+// —— 缓存管理 / 系统状态（M6 后台二期）——
+
+export interface CacheEntryInfo {
+  prefix: string;
+  label: string;
+  ttlSeconds: number;
+  keys: number;
+}
+
+export function getCacheOverview(): Promise<{ entries: CacheEntryInfo[] }> {
+  return fetchJson('/api/admin/cache');
+}
+
+export function purgeCache(prefix: string): Promise<{ deleted: number }> {
+  return fetchJson(`/api/admin/cache?prefix=${encodeURIComponent(prefix)}`, { method: 'DELETE' });
+}
+
+export interface SystemStatus {
+  dbOk: boolean;
+  kvOk: boolean;
+  tables: { name: string; rows: number | null }[];
+  sourceProbes: { name: string; url: string; ok?: boolean; ms?: number; probedAt?: number }[];
+  envKeys: string[];
+  timestamp: number;
+}
+
+export function getSystemStatus(): Promise<SystemStatus> {
+  return fetchJson('/api/admin/system');
+}

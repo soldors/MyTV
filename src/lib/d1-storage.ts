@@ -149,7 +149,7 @@ function mapFavorite(row: FavoriteRow): FavoriteItem {
 }
 
 export class D1Storage implements IStorage {
-  constructor(private readonly db: D1Database) {}
+  constructor(readonly db: D1Database) {}
 
   // —— 用户 ——
 
