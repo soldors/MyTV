@@ -10,6 +10,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import {
   getDoubanRecommend,
+  getHotList,
   listFavorites,
   listRecords,
   type SessionUser,
@@ -24,11 +25,14 @@ import { cn } from '@/lib/utils';
 
 const HOT_KEYWORDS = ['庆余年', '流浪地球', '狂飙', '繁花', '三体', '漫长的季节'];
 
-/** 豆瓣条目行配置：tag 与豆瓣 search_subjects 的分类标签对齐 */
+/** 豆瓣条目行配置：tag 与豆瓣 search_subjects 的分类标签对齐；
+ *  fallbackHotList 为同名义的 60s API 周榜（数据中心出口稳定），豆瓣直连被限时兜底 */
 const DOUBAN_ROWS = [
-  { key: 'hot-movie', title: '热门电影', type: 'movie' as const, tag: '热门' },
+  { key: 'hot-movie', title: '热门电影', type: 'movie' as const, tag: '热门', fallbackHotList: 'douban_movie_weekly' },
   { key: 'top-movie', title: '高分电影', type: 'movie' as const, tag: '豆瓣高分' },
-  { key: 'hot-tv', title: '热门剧集', type: 'tv' as const, tag: '热门' },
+  { key: 'new-movie', title: '最新电影', type: 'movie' as const, tag: '最新' },
+  { key: 'hot-tv', title: '热门剧集', type: 'tv' as const, tag: '热门', fallbackHotList: 'douban_tv_chinese' },
+  { key: 'top-tv', title: '高分剧集', type: 'tv' as const, tag: '豆瓣高分', fallbackHotList: 'douban_tv_global' },
 ];
 
 /** 推荐位 Hero：海报居左 + 封面放大模糊作背景（豆瓣 cover 为竖版海报，直接铺满会糊） */
@@ -249,9 +253,22 @@ function HomeContent({ user }: { user: SessionUser }) {
     void listRecords().then((r) => alive && setRecords(r.list));
     void listFavorites().then((f) => alive && setFavorites(f.list));
     for (const row of DOUBAN_ROWS) {
-      void getDoubanRecommend(row.type, row.tag)
-        .then(({ items }) => alive && setDoubanRows((prev) => ({ ...prev, [row.key]: items })))
-        .catch(() => alive && setDoubanRows((prev) => ({ ...prev, [row.key]: [] })));
+      void (async () => {
+        let items: DoubanItem[] = [];
+        try {
+          items = (await getDoubanRecommend(row.type, row.tag)).items;
+        } catch {
+          /* 直连失败走下方周榜兜底 */
+        }
+        if (items.length === 0 && row.fallbackHotList) {
+          try {
+            items = (await getHotList(row.fallbackHotList)).items;
+          } catch {
+            /* 兜底也失败则隐藏该行 */
+          }
+        }
+        if (alive) setDoubanRows((prev) => ({ ...prev, [row.key]: items }));
+      })();
     }
     return () => {
       alive = false;
