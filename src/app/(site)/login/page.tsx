@@ -1,19 +1,19 @@
 'use client';
 
-// 登录页：海报拼贴暗化背景 + 磨砂玻璃登录卡（docs/02 §6.3）。
-// 三种入口：站长密码（PASSWORD）/ 用户登录（D1）/ 注册（默认需审批 #9）。
+// 用户登录页（2026-09-29 入口拆分）：仅承担普通用户的登录与注册；
+// 站长入口独立为 /admin（站长只负责后台维护，用户登录即看）。
 // 背景为 CSS 渐变拼贴（无外部海报资源依赖），叠加红色径向光晕呼应影院主题。
 
+import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useState } from 'react';
-import { adminLogin, registerUser, userLogin } from '@/lib/client-api';
+import { registerUser, userLogin } from '@/lib/client-api';
 import { useSession } from '@/hooks/use-session';
 import { cn } from '@/lib/utils';
 
-type Tab = 'admin' | 'user' | 'register';
+type Tab = 'user' | 'register';
 
 const TABS: { key: Tab; label: string }[] = [
-  { key: 'admin', label: '站长登录' },
   { key: 'user', label: '用户登录' },
   { key: 'register', label: '注册账号' },
 ];
@@ -56,7 +56,7 @@ function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { refresh } = useSession();
-  const [tab, setTab] = useState<Tab>('admin');
+  const [tab, setTab] = useState<Tab>('user');
   const [name, setName] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -72,11 +72,7 @@ function LoginForm() {
     setMessage('');
     setBusy(true);
     try {
-      if (tab === 'admin') {
-        await adminLogin(password);
-        await refresh();
-        router.replace(next);
-      } else if (tab === 'user') {
+      if (tab === 'user') {
         await userLogin(name.trim(), password);
         await refresh();
         router.replace(next);
@@ -101,7 +97,7 @@ function LoginForm() {
       <h1 className="text-center text-3xl font-extrabold tracking-wide text-accent">MyTV</h1>
       <p className="mt-1 text-center text-xs text-t2">在线影视聚合平台</p>
 
-      <div className="mt-6 grid grid-cols-3 border-b border-overlay">
+      <div className="mt-6 grid grid-cols-2 border-b border-overlay">
         {TABS.map(({ key, label }) => (
           <button
             key={key}
@@ -123,26 +119,24 @@ function LoginForm() {
       </div>
 
       <form onSubmit={handleSubmit} className="mt-6 flex flex-col gap-4">
-        {tab !== 'admin' && (
-          <label className="flex flex-col gap-1.5">
-            <span className="text-xs text-t2">用户名</span>
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              autoComplete="username"
-              placeholder="2-32 位字母 / 数字 / 下划线 / 短横线"
-              className="rounded-lg border border-overlay bg-bg/60 px-3 py-2.5 text-sm text-t1 outline-none transition focus:border-accent"
-            />
-          </label>
-        )}
         <label className="flex flex-col gap-1.5">
-          <span className="text-xs text-t2">{tab === 'admin' ? '站长密码' : '密码'}</span>
+          <span className="text-xs text-t2">用户名</span>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            autoComplete="username"
+            placeholder="2-32 位字母 / 数字 / 下划线 / 短横线"
+            className="rounded-lg border border-overlay bg-bg/60 px-3 py-2.5 text-sm text-t1 outline-none transition focus:border-accent"
+          />
+        </label>
+        <label className="flex flex-col gap-1.5">
+          <span className="text-xs text-t2">密码</span>
           <input
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             autoComplete={tab === 'register' ? 'new-password' : 'current-password'}
-            placeholder={tab === 'admin' ? '部署时配置的 PASSWORD' : '至少 6 位'}
+            placeholder="至少 6 位"
             className="rounded-lg border border-overlay bg-bg/60 px-3 py-2.5 text-sm text-t1 outline-none transition focus:border-accent"
           />
         </label>
@@ -175,7 +169,11 @@ function LoginForm() {
       <p className="mt-4 text-center text-[11px] leading-relaxed text-t3">
         {tab === 'register'
           ? '注册默认需站长审批，通过后方可登录'
-          : '普通用户账号由站长审批后开放，忘记密码请联系站长'}
+          : '忘记密码请联系站长重置'}
+        {' · '}
+        <Link href="/admin" className="underline hover:text-t2">
+          站长入口
+        </Link>
       </p>
     </div>
   );

@@ -16,7 +16,7 @@ import {
   updateSource,
 } from '@/lib/admin-api';
 import type { ApiSourceRecord, SubscriptionRecord } from '@/lib/storage';
-import { AdminDenied, useRequireAdmin } from '@/components/admin/admin-guard';
+import { AdminLoading, useRequireAdmin } from '@/components/admin/admin-guard';
 import { cn } from '@/lib/utils';
 
 type Probe = { ok: boolean; ms: number; count?: number; error?: string };
@@ -294,7 +294,7 @@ export default function AdminSourcesPage() {
     if (ready) reload();
   }, [ready, reload]);
 
-  if (!ready) return <AdminDenied ready={ready} />;
+  if (!ready) return <AdminLoading />;
 
   return (
     <div>

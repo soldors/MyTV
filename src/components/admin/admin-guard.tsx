@@ -1,25 +1,24 @@
 'use client';
 
-// 管理员身份自校验：middleware 已在边缘拦截非管理员（404），
-// 页面侧再校验会话角色，避免缓存页面壳的误导渲染。
+// 管理员身份自校验：middleware 已在边缘拦截（未授权 → /admin 登录页），
+// 页面侧再校验会话角色作为纵深防御——非管理员同样送回登录页而非渲染 404 壳。
 
-import Link from 'next/link';
+import { useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { useSession } from '@/hooks/use-session';
 
 export function useRequireAdmin(): { ready: boolean } {
   const { loading, user } = useSession();
-  return { ready: !loading && user !== null && user.role === 'admin' };
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!loading && user?.role !== 'admin') router.replace('/admin');
+  }, [loading, user, router]);
+
+  return { ready: !loading && user?.role === 'admin' };
 }
 
-export function AdminDenied({ ready }: { ready: boolean }) {
-  if (ready) return null;
-  return (
-    <div className="flex min-h-[50vh] flex-col items-center justify-center gap-3 text-center">
-      <p className="text-4xl font-bold text-overlay">404</p>
-      <p className="text-sm text-t3">页面不存在</p>
-      <Link href="/" className="text-xs text-t2 underline hover:text-t1">
-        返回首页
-      </Link>
-    </div>
-  );
+/** 守卫通过前的加载占位（后台密度风格） */
+export function AdminLoading() {
+  return <div className="mt-6 h-40 animate-pulse rounded-lg bg-elevated" />;
 }

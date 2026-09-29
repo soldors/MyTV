@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { deleteUser, listUsers, resetUserPassword, updateUserStatus } from '@/lib/admin-api';
 import type { StoredUser } from '@/lib/storage';
-import { AdminDenied, useRequireAdmin } from '@/components/admin/admin-guard';
+import { AdminLoading, useRequireAdmin } from '@/components/admin/admin-guard';
 import { cn } from '@/lib/utils';
 
 const STATUS_LABEL: Record<StoredUser['status'], { text: string; className: string }> = {
@@ -119,7 +119,7 @@ export default function AdminUsersPage() {
     if (ready) reload();
   }, [ready, reload]);
 
-  if (!ready) return <AdminDenied ready={ready} />;
+  if (!ready) return <AdminLoading />;
 
   const pending = (users ?? []).filter((u) => u.status === 'pending').length;
 

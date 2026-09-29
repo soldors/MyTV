@@ -5,7 +5,7 @@
 import { useEffect, useState } from 'react';
 import { getSiteConfig, saveSiteConfig } from '@/lib/admin-api';
 import type { SiteConfig } from '@/lib/types';
-import { AdminDenied, useRequireAdmin } from '@/components/admin/admin-guard';
+import { AdminLoading, useRequireAdmin } from '@/components/admin/admin-guard';
 
 function Toggle({
   label,
@@ -56,7 +56,7 @@ export default function AdminSettingsPage() {
       .catch(() => setConfig(null));
   }, [ready]);
 
-  if (!ready) return <AdminDenied ready={ready} />;
+  if (!ready) return <AdminLoading />;
   if (!config) return <div className="mt-5 h-40 animate-pulse rounded-lg bg-elevated" />;
 
   async function save(patch: Partial<SiteConfig>) {

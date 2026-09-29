@@ -1,82 +1,102 @@
 'use client';
 
-// 后台仪表盘（M4）：统计卡（用户/待审批/数据源/订阅）+ 待办入口。
-// 深统计（播放趋势/源可用率）为二期（docs/01 §9.1 后台清单「系统·状态」）。
+// 站长登录页（2026-09-29 入口拆分）：/admin 独立承担站长登录，
+// 与用户登录（/login）彻底分离——站长只负责后台维护，用户登录即看。
+// 已登录管理员自动进入工作台；支持 ?next= 回跳（middleware 送入）。
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
-import { listAdminSources, listSubscriptions, listUsers } from '@/lib/admin-api';
-import type { ApiSourceRecord, StoredUser, SubscriptionRecord } from '@/lib/storage';
-import { AdminDenied, useRequireAdmin } from '@/components/admin/admin-guard';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { Suspense, useEffect, useState } from 'react';
+import { adminLogin } from '@/lib/client-api';
+import { useSession } from '@/hooks/use-session';
 
-function StatCard({ label, value, hint, href }: { label: string; value: number | string; hint?: string; href?: string }) {
-  const inner = (
-    <div className="rounded-lg border border-overlay/60 bg-elevated p-4 transition-colors hover:border-t3/40">
-      <p className="text-xs text-t2">{label}</p>
-      <p className="mt-2 text-2xl font-bold text-t1">{value}</p>
-      {hint && <p className="mt-1 text-[11px] text-t3">{hint}</p>}
-    </div>
-  );
-  return href ? <Link href={href}>{inner}</Link> : inner;
-}
+function AdminLoginForm() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const { loading, user, refresh } = useSession();
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
 
-export default function AdminDashboard() {
-  const { ready } = useRequireAdmin();
-  const [users, setUsers] = useState<StoredUser[] | null>(null);
-  const [sources, setSources] = useState<ApiSourceRecord[] | null>(null);
-  const [envCount, setEnvCount] = useState(0);
-  const [subs, setSubs] = useState<SubscriptionRecord[] | null>(null);
+  const next = searchParams.get('next') || '/admin/dashboard';
 
+  // 已是管理员：直接进工作台
   useEffect(() => {
-    if (!ready) return;
-    void listUsers().then((r) => setUsers(r.users)).catch(() => setUsers([]));
-    void listAdminSources()
-      .then((r) => {
-        setSources(r.dbSources);
-        setEnvCount(r.envSources.length);
-      })
-      .catch(() => setSources([]));
-    void listSubscriptions().then((r) => setSubs(r.subscriptions)).catch(() => setSubs([]));
-  }, [ready]);
+    if (!loading && user?.role === 'admin') router.replace(next);
+  }, [loading, user, router, next]);
 
-  if (!ready) return <AdminDenied ready={ready} />;
-
-  const pending = (users ?? []).filter((u) => u.status === 'pending').length;
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setError('');
+    setBusy(true);
+    try {
+      const res = await adminLogin(password);
+      if (res.user.role !== 'admin') {
+        setError('该密码不是站长密码（用户登录请从前台「登录」进入）');
+        return;
+      }
+      await refresh();
+      router.replace(next);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '登录失败');
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
-    <div>
-      <h1 className="text-lg font-bold text-t1">仪表盘</h1>
-      <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatCard label="注册用户" value={users === null ? '…' : users.length} href="/admin/users" />
-        <StatCard
-          label="待审批"
-          value={users === null ? '…' : pending}
-          hint={pending > 0 ? '点击去处理' : '暂无待办'}
-          href="/admin/users"
-        />
-        <StatCard
-          label="数据源"
-          value={sources === null ? '…' : `${sources.length} + ${envCount}`}
-          hint="后台源 + 环境变量预置"
-          href="/admin/sources"
-        />
-        <StatCard label="订阅" value={subs === null ? '…' : subs.length} hint="TVBox / SourceList" href="/admin/sources" />
-      </div>
+    <div className="relative flex min-h-screen items-center justify-center px-4">
+      {/* 背景基调：暗色 + 红色径向光晕（与前台登录同语言，装饰收敛） */}
+      <div
+        className="absolute left-1/2 top-1/3 h-[55vmin] w-[55vmin] -translate-x-1/2 -translate-y-1/2 rounded-full"
+        style={{ background: 'radial-gradient(circle, rgba(232,17,45,0.12) 0%, transparent 70%)' }}
+        aria-hidden
+      />
+      <div className="relative z-10 w-full max-w-[380px] rounded-lg border border-overlay/60 bg-elevated p-8 shadow-card">
+        <p className="text-center text-2xl font-extrabold tracking-wide text-accent">MyTV</p>
+        <p className="mt-1 text-center text-xs text-t2">管理后台 · 站长入口</p>
 
-      {pending > 0 && (
-        <div className="mt-6 rounded-lg border border-accent/40 bg-accent/10 p-4">
-          <p className="text-sm text-t1">
-            有 <span className="font-bold text-accent">{pending}</span> 个用户等待审批
-          </p>
-          <Link href="/admin/users" className="mt-2 inline-block text-xs text-accent underline">
-            前往处理 →
+        <form onSubmit={submit} className="mt-6 flex flex-col gap-4">
+          <label className="flex flex-col gap-1.5">
+            <span className="text-xs text-t2">站长密码</span>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+              placeholder="部署时配置的 PASSWORD"
+              className="rounded-lg border border-overlay bg-bg/60 px-3 py-2.5 text-sm text-t1 outline-none transition focus:border-accent"
+            />
+          </label>
+          {error && <p className="text-xs text-accent">{error}</p>}
+          <button
+            type="submit"
+            disabled={busy || !password}
+            className="mt-1 w-full rounded-full bg-accent py-2.5 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {busy ? '登录中…' : '进入后台'}
+          </button>
+        </form>
+
+        <p className="mt-4 text-center text-[11px] text-t3">
+          普通用户请从{' '}
+          <Link href="/login" className="underline hover:text-t2">
+            前台登录
+          </Link>{' '}
+          进入 ·{' '}
+          <Link href="/" className="underline hover:text-t2">
+            返回首页
           </Link>
-        </div>
-      )}
-
-      <p className="mt-8 text-xs leading-relaxed text-t3">
-        一期后台为最小集（#15）：数据源 / 用户 / 站点设置。缓存管理、播放趋势、备份导出等见 docs/01 §9.1 二期清单。
-      </p>
+        </p>
+      </div>
     </div>
+  );
+}
+
+export default function AdminLoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <AdminLoginForm />
+    </Suspense>
   );
 }
