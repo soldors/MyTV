@@ -14,6 +14,9 @@ NEXT_PUBLIC_SITE_NAME = "MyTV"
 DEFAULT_SOURCES = '[{"name":"量子资源","url":"https://cj.lziapi.com/api.php/provide/vod"}]'
 # 预置直播源（M5）：[{name, url(M3U), epg?(XMLTV，支持 .gz)}]
 DEFAULT_LIVE_SOURCES = '[{"name":"iptv-org 中国","url":"https://iptv-org.github.io/iptv/countries/cn.m3u"}]'
+# 热榜数据源（60s API，自部署实例：/tmp/60s → 60s.soldors1.workers.dev，2026-09-29）
+# 周榜/热搜回退用；不设则走社区实例 60s.crystelf.top → 官方 60s.viki.moe 逐级回退
+60S_API_BASE = "https://60s.soldors1.workers.dev"
 
 # M1（D1 数据层）已启用：本地状态在 .wrangler/state，远程已建库
 [[d1_databases]]
