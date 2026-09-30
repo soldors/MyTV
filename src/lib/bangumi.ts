@@ -2,7 +2,8 @@
 // 改动：UA 品牌串改 MyTV
 
 import type { DoubanItem } from './types';
-import { fetchUpstream, getCache, setCache } from './fetch-utils';
+import { fetchUpstream } from './fetch-utils';
+import { withDailyKvCache } from './upstream-cache';
 
 /**
  * Bangumi 每日放送（新番时间表）数据获取。
@@ -11,7 +12,6 @@ import { fetchUpstream, getCache, setCache } from './fetch-utils';
  */
 
 const BANGUMI_API = 'https://api.bgm.tv/calendar';
-const CACHE_TTL = 30 * 60 * 1000;
 // Bangumi 要求自带可识别的 UA，默认 UA（如 axios/undici）会被拒绝
 const UA = 'MyTV (+https://github.com/soldors/MyTV)';
 
@@ -62,8 +62,8 @@ export function groupCalendarByWeekday(raw: BangumiCalendarDay[]): Record<number
 }
 
 export async function fetchBangumiCalendar(): Promise<Record<number, DoubanItem[]>> {
-  const cached = getCache<Record<number, DoubanItem[]>>(BANGUMI_API);
-  if (cached) return cached;
+  // 放送表按天更新：KV 全局缓存 24h，全站每天只真拉一次上游
+  return withDailyKvCache('bangumi:calendar', 24 * 3600, 30 * 60 * 1000, async () => {
 
   const res = await fetchUpstream(BANGUMI_API, {
     timeoutMs: 8000,
@@ -75,6 +75,6 @@ export async function fetchBangumiCalendar(): Promise<Record<number, DoubanItem[
   const days = groupCalendarByWeekday(Array.isArray(raw) ? raw : []);
   if (Object.keys(days).length === 0) throw new Error('Bangumi 放送表数据为空');
 
-  setCache(BANGUMI_API, days, CACHE_TTL);
   return days;
+  });
 }

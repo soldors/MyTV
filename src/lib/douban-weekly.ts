@@ -2,7 +2,8 @@
 // 改动：UA 品牌串改 MyTV
 
 import type { DoubanItem } from './types';
-import { fetchUpstream, getCache, setCache } from './fetch-utils';
+import { fetchUpstream } from './fetch-utils';
+import { withDailyKvCache } from './upstream-cache';
 
 /**
  * 影视热榜聚合（经 60s API，免 key，https://github.com/vikiboss/60s）。
@@ -12,7 +13,6 @@ import { fetchUpstream, getCache, setCache } from './fetch-utils';
  * 数据中心出口 IP 常被限流，Vercel 上不可依赖）；可用 60S_API_BASE 指向自部署实例。
  */
 
-const CACHE_TTL = 60 * 60 * 1000;
 const UA = 'MyTV (+https://github.com/soldors/MyTV)';
 
 const FALLBACK_BASE = 'https://60s.viki.moe';
@@ -120,8 +120,8 @@ async function fetchJson(path: string): Promise<unknown> {
 
 export async function fetchHotList(id: HotListId): Promise<DoubanItem[]> {
   const cacheKey = `hot-list:${id}`;
-  const cached = getCache<DoubanItem[]>(cacheKey);
-  if (cached) return cached;
+  // 榜单低频变化：KV 全局缓存 24h，全站每天只真拉一次上游（含 60s 实例回退链）
+  return withDailyKvCache(cacheKey, 24 * 3600, 30 * 60 * 1000, async () => {
 
   let items: DoubanItem[];
 
@@ -141,6 +141,6 @@ export async function fetchHotList(id: HotListId): Promise<DoubanItem[]> {
 
   if (items.length === 0) throw new Error('榜单数据为空');
 
-  setCache(cacheKey, items, CACHE_TTL);
   return items;
+  });
 }

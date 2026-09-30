@@ -1,7 +1,8 @@
 // 移植自 LibreSpark/LibreTV v2.15.0（AGPL-3.0），见 README 开源义务说明
 
 import type { DoubanItem } from './types';
-import { fetchUpstream, getCache, setCache } from './fetch-utils';
+import { fetchUpstream } from './fetch-utils';
+import { withDailyKvCache } from './upstream-cache';
 
 /**
  * 豆瓣推荐数据获取（服务端直连，带内存缓存与降级链）。
@@ -10,7 +11,6 @@ import { fetchUpstream, getCache, setCache } from './fetch-utils';
  */
 
 const DOUBAN_API = 'https://movie.douban.com/j/search_subjects';
-const CACHE_TTL = 10 * 60 * 1000;
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
 
@@ -35,8 +35,8 @@ export async function fetchDoubanRecommend(
   pageSize: number
 ): Promise<DoubanItem[]> {
   const cacheKey = `douban:${type}:${tag}:${pageStart}:${pageSize}`;
-  const cached = getCache<DoubanItem[]>(cacheKey);
-  if (cached) return cached;
+  // 推荐列表低频变化：KV 全局缓存 24h，全站每天只真拉一次上游
+  return withDailyKvCache(cacheKey, 24 * 3600, 10 * 60 * 1000, async () => {
 
   const target = `${DOUBAN_API}?type=${type}&tag=${encodeURIComponent(tag)}&sort=recommend&page_limit=${pageSize}&page_start=${pageStart}`;
 
@@ -85,6 +85,6 @@ export async function fetchDoubanRecommend(
     isTv: type === 'tv',
   }));
 
-  setCache(cacheKey, items, CACHE_TTL);
-  return items;
+    return items;
+  });
 }
