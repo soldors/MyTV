@@ -106,6 +106,20 @@ export async function GET(req: Request, ctx: { params: Promise<{ url: string }> 
   const range = req.headers.get('range');
   if (range) headers.Range = range;
 
+  // 边缘缓存策略：视频分片/图片是静态内容，落 Cloudflare 边缘缓存后
+  // 同片二刷、多人观看直接命中就近节点（源站只被打一次）；
+  // m3u8 索引短缓存保新鲜；share 播放器页（HTML）与未知类型不缓存。
+  const lowerUrl = targetUrl.toLowerCase();
+  const cacheCf: Record<string, unknown> | undefined = (() => {
+    if (/\.(ts|m4s|mp4|jpg|jpeg|png|webp|gif|key)([?#]|$)/.test(lowerUrl)) {
+      return { cacheEverything: true, cacheTtl: 6 * 3600, cacheTtlByStatus: { '404-410': 0, '500-599': 0 } };
+    }
+    if (lowerUrl.includes('.m3u8')) {
+      return { cacheEverything: true, cacheTtl: 60, cacheTtlByStatus: { '404-410': 0, '500-599': 0 } };
+    }
+    return undefined;
+  })();
+
   let response: Response | undefined;
   let finalUrl = targetUrl;
   let lastError: unknown = null;
@@ -114,7 +128,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ url: string }> 
       const result = await fetchWithSafeRedirects(targetUrl, {
         headers,
         signal: AbortSignal.timeout(TIMEOUT_MS),
-      });
+      }, { cf: cacheCf });
       response = result.res;
       finalUrl = result.finalUrl;
       lastError = null;
@@ -156,11 +170,29 @@ export async function GET(req: Request, ctx: { params: Promise<{ url: string }> 
           playlist.toLowerCase().includes('.m3u8');
       }
     }
+    // 播放器页 body 已读入内存，此分支不能再走下方流式透传（重复消费 body，
+    // workerd 直接抛异常变 500）。源站对代理出口返回风控页等提不出 m3u8 的
+    // 情形，明确报错让用户换源，而不是压成 500 白屏。
+    if (!isM3u8) {
+      return new NextResponse('无法从播放器页解析出视频地址，该源可能限制访问，请换源试试', {
+        status: 502,
+        headers: { 'Access-Control-Allow-Origin': '*' },
+      });
+    }
   }
 
   // m3u8 文本：重写为代理路径（以重定向后的最终 URL 为 base 解析相对地址）
   if (isM3u8) {
     const text = await response.text();
+    // 内容嗅探：源站播放 CDN 对代理出口存在间歇性风控，会把 403 页面
+    // 以 m3u8 路径返回（URL 判定通过但内容是 HTML）。喂给 hls.js 只会
+    // 得到莫名的分片加载失败，明确报错引导换源。
+    if (!text.replace(/^\uFEFF/, '').trimStart().startsWith('#EXTM3U')) {
+      return new NextResponse('播放列表不可用（源站拒绝访问），请换源试试', {
+        status: 502,
+        headers: { 'Access-Control-Allow-Origin': '*' },
+      });
+    }
     return new NextResponse(rewriteM3u8(text, finalUrl), {
       status: response.status,
       headers: {

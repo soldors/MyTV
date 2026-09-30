@@ -87,7 +87,16 @@ export default function ArtPlayer({
           const withHls = player as ArtplayerWithHls;
           if (Hls.isSupported()) {
             if (withHls.hls) withHls.hls.destroy();
-            const hls = new Hls();
+            // 起播体验调优：默认配置按 500kbps 保守估带宽（起步糊且慢），
+            // 且 attach 后才拉首片。startFragPrefetch + 1Mbps 初始估计让
+            // 首屏更快进入高清；前向缓冲 60s 更抗源站抖动。
+            const hls = new Hls({
+              startFragPrefetch: true,
+              abrEwmaDefaultEstimate: 1_000_000,
+              maxBufferLength: 60,
+              maxMaxBufferLength: 120,
+              backBufferLength: 30,
+            });
             hls.loadSource(src);
             hls.attachMedia(video);
             withHls.hls = hls;

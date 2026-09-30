@@ -41,6 +41,11 @@ export interface SafeRedirectOptions {
    * 超时触发即整链失败（内部 controller 已 abort，对齐直播路由原行为）。
    */
   headerTimeoutMs?: number;
+  /**
+   * 透传 Workers fetch 的 cf 选项（cacheEverything / cacheTtl 等，
+   * 用于代理分片落 Cloudflare 边缘缓存）。非标准 RequestInit 字段。
+   */
+  cf?: Record<string, unknown>;
 }
 
 /**
@@ -53,7 +58,7 @@ export async function fetchWithSafeRedirects(
   init: Omit<RequestInit, 'redirect'> = {},
   options: SafeRedirectOptions = {}
 ): Promise<FetchResult> {
-  const { allowPrivate = false, headerTimeoutMs } = options;
+  const { allowPrivate = false, headerTimeoutMs, cf } = options;
   let current = url;
   // headerTimeout 超时即 abort 内部 controller；外部 signal（调用方死线/客户端断开）链入同一 controller
   const controller = new AbortController();
@@ -71,7 +76,8 @@ export async function fetchWithSafeRedirects(
     const timer = headerTimeoutMs ? setTimeout(() => controller.abort(), headerTimeoutMs) : null;
     let res: Response;
     try {
-      res = await fetch(current, { ...init, signal: controller.signal, redirect: 'manual' });
+      // cf：Workers fetch 的边缘缓存扩展（cacheEverything/cacheTtl），非标准 RequestInit 字段
+      res = await fetch(current, { ...init, cf, signal: controller.signal, redirect: 'manual' } as RequestInit);
     } finally {
       if (timer) clearTimeout(timer);
     }
