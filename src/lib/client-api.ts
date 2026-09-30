@@ -67,6 +67,16 @@ export function registerUser(
   return postJson('/api/user/register', { name, password });
 }
 
+/** 忘记密码第一步：提交重置申请（待站长审批） */
+export function requestPasswordReset(username: string): Promise<{ message: string }> {
+  return postJson('/api/user/forgot-password', { username });
+}
+
+/** 忘记密码第二步：凭一次性重置码设置新密码 */
+export function resetPasswordWithCode(username: string, code: string, newPassword: string): Promise<{ message: string }> {
+  return postJson('/api/user/reset-password', { username, code, newPassword });
+}
+
 export function logout(): Promise<void> {
   return fetchJson('/api/auth', { method: 'DELETE' }).then(() => undefined);
 }

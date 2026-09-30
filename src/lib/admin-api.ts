@@ -96,6 +96,31 @@ export function restoreEnvLiveSource(url: string): Promise<void> {
   return fetchJson('/api/admin/live-sources', jsonInit('POST', { action: 'restoreEnv', url })).then(() => undefined);
 }
 
+// —— 密码重置审批 ——
+
+export interface PasswordResetRequestView {
+  id: number;
+  username: string;
+  status: 'pending' | 'approved' | 'rejected' | 'used';
+  expiresAt?: number;
+  createdAt: number;
+  decidedAt?: number;
+  usedAt?: number;
+}
+
+export function listPasswordResets(): Promise<{ requests: PasswordResetRequestView[] }> {
+  return fetchJson('/api/admin/password-resets');
+}
+
+/** 批准：返回一次性重置码明文（仅此一次，站长线下告知用户） */
+export function approvePasswordReset(id: number): Promise<{ code: string; expiresAt?: number }> {
+  return fetchJson('/api/admin/password-resets', jsonInit('POST', { id, action: 'approve' }));
+}
+
+export function rejectPasswordReset(id: number): Promise<void> {
+  return fetchJson('/api/admin/password-resets', jsonInit('POST', { id, action: 'reject' })).then(() => undefined);
+}
+
 // —— 订阅 ——
 
 export function listSubscriptions(): Promise<{ subscriptions: SubscriptionRecord[] }> {

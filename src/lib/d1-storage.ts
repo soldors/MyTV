@@ -15,6 +15,7 @@ import {
   type LiveSourceInput,
   type LiveSourcePatch,
   type LiveSourceRecord,
+  type PasswordResetRequest,
   type PlayRecord,
   type SearchHistoryItem,
   type SiteConfig,
@@ -94,6 +95,30 @@ interface LiveSourceRow {
   url: string;
   epg: string | null;
   enabled: number;
+}
+
+interface PasswordResetRow {
+  id: number;
+  username: string;
+  status: string;
+  expires_at: number | null;
+  created_at: number;
+  decided_at: number | null;
+  used_at: number | null;
+}
+
+function mapPasswordReset(row: PasswordResetRow): PasswordResetRequest {
+  const status =
+    row.status === 'approved' || row.status === 'rejected' || row.status === 'used' ? row.status : 'pending';
+  return {
+    id: row.id,
+    username: row.username,
+    status,
+    expiresAt: row.expires_at ?? undefined,
+    createdAt: row.created_at,
+    decidedAt: row.decided_at ?? undefined,
+    usedAt: row.used_at ?? undefined,
+  };
 }
 
 function mapLiveSource(row: LiveSourceRow): LiveSourceRecord {
@@ -236,6 +261,80 @@ export class D1Storage implements IStorage {
       .bind(name, credentials.passwordHash, credentials.salt, credentials.iterations)
       .run();
     return (res.meta.changes ?? 0) > 0;
+  }
+
+  // —— 密码重置（忘记密码 → 站长审批 → 一次性重置码） ——
+
+  async createPasswordResetRequest(username: string): Promise<void> {
+    // 同用户名未决申请先清掉（覆盖式，防止重复点击刷出一列 pending）
+    await this.db.batch([
+      this.db.prepare(
+        `DELETE FROM password_resets WHERE username = ?1 AND status IN ('pending', 'approved')`
+      ).bind(username),
+      this.db.prepare(
+        'INSERT INTO password_resets (username, status, created_at) VALUES (?1, \'pending\', ?2)'
+      ).bind(username, Date.now()),
+    ]);
+  }
+
+  async listPasswordResetRequests(): Promise<PasswordResetRequest[]> {
+    const res = await this.db
+      .prepare(
+        `SELECT id, username, status, expires_at, created_at, decided_at, used_at
+         FROM password_resets ORDER BY id DESC LIMIT 100`
+      )
+      .all<PasswordResetRow>();
+    return (res.results ?? []).map(mapPasswordReset);
+  }
+
+  async approvePasswordReset(id: number, codeHash: string, expiresAt: number): Promise<PasswordResetRequest | null> {
+    await this.db
+      .prepare(
+        `UPDATE password_resets SET status = 'approved', code_hash = ?2, expires_at = ?3, decided_at = ?4
+         WHERE id = ?1 AND status = 'pending'`
+      )
+      .bind(id, codeHash, expiresAt, Date.now())
+      .run();
+    return this.getPasswordResetById(id);
+  }
+
+  async rejectPasswordReset(id: number): Promise<PasswordResetRequest | null> {
+    await this.db
+      .prepare(
+        `UPDATE password_resets SET status = 'rejected', decided_at = ?2 WHERE id = ?1 AND status = 'pending'`
+      )
+      .bind(id, Date.now())
+      .run();
+    return this.getPasswordResetById(id);
+  }
+
+  async findApprovedPasswordReset(username: string): Promise<{ id: number; codeHash: string } | null> {
+    const row = await this.db
+      .prepare(
+        `SELECT id, code_hash, expires_at FROM password_resets
+         WHERE username = ?1 AND status = 'approved' AND expires_at > ?2
+         ORDER BY id DESC LIMIT 1`
+      )
+      .bind(username, Date.now())
+      .first<{ id: number; code_hash: string; expires_at: number }>();
+    return row ? { id: row.id, codeHash: row.code_hash } : null;
+  }
+
+  async consumePasswordReset(id: number): Promise<void> {
+    await this.db
+      .prepare(`UPDATE password_resets SET status = 'used', used_at = ?2 WHERE id = ?1 AND status = 'approved'`)
+      .bind(id, Date.now())
+      .run();
+  }
+
+  private async getPasswordResetById(id: number): Promise<PasswordResetRequest | null> {
+    const row = await this.db
+      .prepare(
+        'SELECT id, username, status, expires_at, created_at, decided_at, used_at FROM password_resets WHERE id = ?1'
+      )
+      .bind(id)
+      .first<PasswordResetRow>();
+    return row ? mapPasswordReset(row) : null;
   }
 
   async deleteUser(name: string): Promise<boolean> {

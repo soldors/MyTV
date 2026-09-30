@@ -110,6 +110,17 @@ export interface UserStatusCounts {
   disabled: number;
 }
 
+/** 密码重置申请（password_resets 表；codeHash 仅存储，明文只在批准响应出现一次） */
+export interface PasswordResetRequest {
+  id: number;
+  username: string;
+  status: 'pending' | 'approved' | 'rejected' | 'used';
+  expiresAt?: number;
+  createdAt: number;
+  decidedAt?: number;
+  usedAt?: number;
+}
+
 export interface ApiSourceInput {
   name: string;
   apiUrl: string;
@@ -147,6 +158,21 @@ export interface IStorage {
   updateUserPassword(name: string, credentials: UserCredentials): Promise<boolean>;
   deleteUser(name: string): Promise<boolean>;
   listUsers(): Promise<StoredUser[]>;
+
+  // —— 密码重置（忘记密码 → 站长审批 → 一次性重置码） ——
+
+  /** 新建重置申请；同用户名已有 pending 申请时覆盖（防重复刷屏） */
+  createPasswordResetRequest(username: string): Promise<void>;
+  /** 审批列表（新申请在前） */
+  listPasswordResetRequests(): Promise<PasswordResetRequest[]>;
+  /** 批准：写入一次性重置码哈希与 24h 过期时间 */
+  approvePasswordReset(id: number, codeHash: string, expiresAt: number): Promise<PasswordResetRequest | null>;
+  /** 拒绝申请 */
+  rejectPasswordReset(id: number): Promise<PasswordResetRequest | null>;
+  /** 找该用户名处于 approved 且未过期的申请（重置验证用） */
+  findApprovedPasswordReset(username: string): Promise<{ id: number; codeHash: string } | null>;
+  /** 标记已使用（一次性） */
+  consumePasswordReset(id: number): Promise<void>;
 
   // —— 播放记录 ——
   upsertPlayRecord(userName: string, record: Omit<PlayRecord, 'saveTime'>): Promise<PlayRecord>;
