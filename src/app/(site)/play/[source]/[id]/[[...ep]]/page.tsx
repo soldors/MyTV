@@ -182,6 +182,20 @@ function PlayPageInner({ source: sourceKeyRaw, id, epPath }: { source: string; i
    *  从搜索页跳转来的请求近零开销；验证失败顺带进入熔断统计。 */
   async function loadSourceCandidates() {
     if (!info?.title) return;
+    // 验证结果按片名缓存 10 分钟（sessionStorage）：反复开面板不重复打
+    // 16 个源的详情验证（免费版 Workers 请求额度的另一隐形大头）
+    try {
+      const cached = sessionStorage.getItem(`mytv_src_cand:${info.title}`);
+      if (cached) {
+        const parsed = JSON.parse(cached) as { at: number; list: SearchResultItem[] };
+        if (Date.now() - parsed.at < 10 * 60 * 1000 && Array.isArray(parsed.list)) {
+          setSourceCandidates(parsed.list);
+          return;
+        }
+      }
+    } catch {
+      /* 隐私模式等场景忽略 */
+    }
     setSourceSearching(true);
     try {
       const { sources } = await getSources();
@@ -204,7 +218,16 @@ function PlayPageInner({ source: sourceKeyRaw, id, epPath }: { source: string; i
           }
         })
       );
-      setSourceCandidates(checked.filter((item): item is SearchResultItem => item !== null));
+      const valid = checked.filter((item): item is SearchResultItem => item !== null);
+      setSourceCandidates(valid);
+      try {
+        sessionStorage.setItem(
+          `mytv_src_cand:${info.title}`,
+          JSON.stringify({ at: Date.now(), list: valid })
+        );
+      } catch {
+        /* 忽略 */
+      }
     } catch {
       setSourceCandidates([]);
     } finally {

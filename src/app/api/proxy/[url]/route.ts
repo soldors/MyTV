@@ -209,8 +209,10 @@ export async function GET(req: Request, ctx: { params: Promise<{ url: string }> 
     const v = response.headers.get(name);
     if (v) outHeaders.set(name, v);
   }
-  // fetch 会自动解压，转发时必须去掉长度相关头避免浏览器二次解压
-  outHeaders.set('Cache-Control', wasHtml ? 'no-store' : 'public, max-age=3600');
+  // fetch 会自动解压，转发时必须去掉长度相关头避免浏览器二次解压。
+  // 封面/分片按 URL 不可变（豆瓣封面 URL 含内容哈希、m3u8 分片名含序号），
+  // 浏览器侧缓存 1 天：跨会话/跨页复用，显著减少打进 Worker 的图片与分片请求
+  outHeaders.set('Cache-Control', wasHtml ? 'no-store' : 'public, max-age=86400');
   outHeaders.set('Access-Control-Allow-Origin', '*');
 
   return new NextResponse(response.body, {

@@ -133,7 +133,9 @@ export default function ArtPlayer({
     // ArtPlayer 的媒体元素事件带 video: 前缀（art.on('timeupdate') 不存在）
     art.on('video:timeupdate', () => {
       const now = Date.now();
-      if (now - lastSave >= 10_000) {
+      // 30s 节流：进度只用于续看，30s 粒度足够（10s 时一部电影 500+ 次请求，
+      // 是免费版 Workers 请求额度的隐形大头）
+      if (now - lastSave >= 30_000) {
         lastSave = now;
         progressRef.current?.(art.currentTime, art.duration || 0);
       }
