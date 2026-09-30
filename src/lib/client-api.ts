@@ -17,6 +17,7 @@ import type {
   SourceConfig,
   VideoDetail,
 } from './types';
+import { getCached, isFresh, setCached } from './swr-cache';
 
 export interface SessionUser {
   name: string;
@@ -83,8 +84,26 @@ export function logout(): Promise<void> {
 
 // —— 数据源 ——
 
+let sourcesInflight: Promise<{ sources: SourceConfig[]; liveSources: LiveSourceConfig[] }> | null = null;
+
+/** 源列表 SPA 内缓存 5 分钟：几乎不变（仅后台改动才变），进播放页/搜索页不再重复请求 */
 export function getSources(): Promise<{ sources: SourceConfig[]; liveSources: LiveSourceConfig[] }> {
-  return fetchJson('/api/sources');
+  const KEY = 'sources';
+  if (isFresh(KEY, 5 * 60 * 1000)) {
+    const cached = getCached<{ sources: SourceConfig[]; liveSources: LiveSourceConfig[] }>(KEY);
+    if (cached) return Promise.resolve(cached);
+  }
+  // 并发去重：同屏多个组件同时要源列表只发一个请求
+  if (sourcesInflight) return sourcesInflight;
+  type SourcesPayload = { sources: SourceConfig[]; liveSources: LiveSourceConfig[] };
+  const req: Promise<SourcesPayload> = fetchJson<SourcesPayload>('/api/sources').then((data) => {
+    setCached(KEY, data);
+    return data;
+  });
+  req.finally(() => {
+    sourcesInflight = null;
+  });
+  return req;
 }
 
 // —— 直播（M5） ——
