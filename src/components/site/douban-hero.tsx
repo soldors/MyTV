@@ -60,7 +60,7 @@ export function DoubanHeroSlide({ item, active }: { item: DoubanItem; active: bo
           </p>
           <div className="mt-1 flex gap-3">
             <Link
-              href={`/search?wd=${encodeURIComponent(item.title)}`}
+              href={`/search?wd=${encodeURIComponent(item.title)}&go=1`}
               className="flex items-center gap-2 rounded-full bg-accent px-5 py-2.5 text-sm font-semibold text-white transition hover:opacity-90 md:px-7"
             >
               <IconPlay className="h-4 w-4" />

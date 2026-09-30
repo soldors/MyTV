@@ -60,6 +60,24 @@ async function loadHotKeywords(): Promise<string[]> {
   return HOT_KEYWORDS;
 }
 
+/** 同名影片去重分组：归一化标题聚合，取每组首位作代表（搜索展示与 go 直达共用） */
+function groupByTitle(items: SearchResultItem[]): { item: SearchResultItem; sourceCount: number }[] {
+  const groups: { item: SearchResultItem; sourceCount: number }[] = [];
+  const byTitle = new Map<string, { item: SearchResultItem; sourceCount: number }>();
+  for (const item of items) {
+    const key = normalizeTitle(item.name || '');
+    const existing = byTitle.get(key);
+    if (existing) {
+      existing.sourceCount += 1;
+    } else {
+      const group = { item, sourceCount: 1 };
+      byTitle.set(key, group);
+      groups.push(group);
+    }
+  }
+  return groups;
+}
+
 /** 从结果聚合某维度的选项（值 → 数量），按数量降序取前 N *//** 从结果聚合某维度的选项（值 → 数量），按数量降序取前 N */
 function buildFacets(
   results: SearchResultItem[],
@@ -82,6 +100,8 @@ function SearchPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const initialWd = searchParams.get('wd') || '';
+  /** go=1：内容卡直达（点推荐位先进搜索聚合，完成取去重后首结果直接进播放页） */
+  const autoGo = searchParams.get('go') === '1';
 
   const [wd, setWd] = useState(initialWd);
   /** 全部启用源（后台管理启停），搜索时全量查询 */
@@ -94,6 +114,8 @@ function SearchPageInner() {
   const [hotKeywords, setHotKeywords] = useState<string[]>(HOT_KEYWORDS);
   const abortRef = useRef<AbortController | null>(null);
   const autoSearched = useRef(false);
+  const autoGoRef = useRef(autoGo);
+  autoGoRef.current = autoGo;
 
   // 结果筛选（类型/地区/年份）
   const [filterType, setFilterType] = useState<string | null>(null);
@@ -140,6 +162,18 @@ function SearchPageInner() {
           },
         });
         setResults(final.list);
+        // 内容卡直达：取去重分组首位（精确命中/权重最优）直接进播放页；
+        // 无结果留在本页由筛选与提示兜底
+        if (autoGoRef.current) {
+          autoGoRef.current = false;
+          const first = groupByTitle(final.list)[0]?.item;
+          if (first) {
+            router.replace(
+              `/play/${encodeURIComponent(first.sourceKey)}/${encodeURIComponent(first.vodId)}`
+            );
+            return;
+          }
+        }
         void addSearchHistory(q).then(() =>
           listSearchHistory()
             .then(({ list }) => setHistory(list))
@@ -191,22 +225,7 @@ function SearchPageInner() {
 
   // 同名影片去重展示：归一化标题分组，每组取排序后的首位（精确命中/权重最优）作代表，
   // 次要源在播放页「换源」面板切换（面板现搜命中服务端搜索缓存，通常毫秒级）
-  const groupedResults = useMemo(() => {
-    const groups: { item: SearchResultItem; sourceCount: number }[] = [];
-    const byTitle = new Map<string, { item: SearchResultItem; sourceCount: number }>();
-    for (const item of filteredResults) {
-      const key = normalizeTitle(item.name || '');
-      const existing = byTitle.get(key);
-      if (existing) {
-        existing.sourceCount += 1;
-      } else {
-        const group = { item, sourceCount: 1 };
-        byTitle.set(key, group);
-        groups.push(group);
-      }
-    }
-    return groups;
-  }, [filteredResults]);
+  const groupedResults = useMemo(() => groupByTitle(filteredResults), [filteredResults]);
 
   const typeFacets = useMemo(() => (searched ? buildFacets(results!, 'typeName') : []), [results, searched]);
   const areaFacets = useMemo(() => (searched ? buildFacets(results!, 'area') : []), [results, searched]);
@@ -273,7 +292,6 @@ function SearchPageInner() {
           <input
             value={wd}
             onChange={(e) => setWd(e.target.value)}
-            autoFocus
             placeholder="搜索影视、演员、导演"
             className="w-full bg-transparent text-sm text-t1 outline-none placeholder:text-t3"
           />

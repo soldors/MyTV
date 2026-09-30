@@ -209,7 +209,7 @@ function ExploreInner() {
                 pic={item.cover ? `/api/proxy/${encodeURIComponent(item.cover)}` : undefined}
                 rating={item.rating}
                 remarks={type === 'bangumi' ? '新番' : item.isTv ? '剧集' : '电影'}
-                href={`/search?wd=${encodeURIComponent(item.title)}`}
+                href={`/search?wd=${encodeURIComponent(item.title)}&go=1`}
               />
             ))}
           </div>

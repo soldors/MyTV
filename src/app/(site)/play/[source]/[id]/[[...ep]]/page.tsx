@@ -639,7 +639,7 @@ function PlayPageInner({ source: sourceKeyRaw, id, epPath }: { source: string; i
                 title={item.title}
                 pic={item.cover ? `/api/proxy/${encodeURIComponent(item.cover)}` : undefined}
                 rating={item.rating}
-                href={`/search?wd=${encodeURIComponent(item.title)}`}
+                href={`/search?wd=${encodeURIComponent(item.title)}&go=1`}
                 className="w-[120px] shrink-0 md:w-[160px]"
               />
             ))}

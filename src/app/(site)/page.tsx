@@ -172,7 +172,7 @@ function DoubanRow({ items }: { items: DoubanItem[] }) {
           pic={item.cover ? `/api/proxy/${encodeURIComponent(item.cover)}` : undefined}
           rating={item.rating}
           remarks={item.isTv ? '剧集' : '电影'}
-          href={`/search?wd=${encodeURIComponent(item.title)}`}
+          href={`/search?wd=${encodeURIComponent(item.title)}&go=1`}
           className="w-[120px] shrink-0 md:w-[160px]"
         />
       ))}
